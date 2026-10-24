@@ -280,6 +280,13 @@ var configSetCmd = &cobra.Command{
 		if err != nil {
 			return HandleError("%v", err)
 		}
+		// Per-key validation that needs the store rather than the key alone: turning
+		// versioned history on refuses, writing nothing, while any issue that
+		// participates in history, or any template, holds a value a version could not
+		// record. The store is open here, on whichever route this is.
+		if err := guardVersionedHistorySwitch(rootCtx, key, value); err != nil {
+			return HandleError("%v", err)
+		}
 		result, err := settings.SetSetting(rootCtx, issueops.SetSettingRequest{Key: key, Value: value})
 		if err != nil {
 			return HandleError("setting config: %v", err)
@@ -1222,6 +1229,15 @@ Examples:
 					return HandleError("%v", err)
 				}
 			}
+			// The pre-enable check `bd config set` makes: turning versioned history
+			// on refuses while any issue that participates in history, or any
+			// template, holds a value a version could not record.
+			// This verb writes the same setting through a loop of its own, so it
+			// makes the check itself, here and before any pair is written: a refusal
+			// stores nothing from the batch.
+			if err := guardVersionedHistorySwitch(rootCtx, p.key, p.value); err != nil {
+				return HandleError("%v", err)
+			}
 		}
 
 		var yamlPairs, gitPairs, dbPairs []kvPair
@@ -1352,7 +1368,7 @@ var recognizedConfigPrefixes = []string{
 	"status.", "types.", "doctor.suppress.", "routing.", "sync.", "git.",
 	"directory.", "repos.", "external_projects.", "validation.",
 	"lint.", "hierarchy.", "ai.", "backup.", "federation.", "metrics.",
-	"agent.", "claim.", "storage-class.",
+	"agent.", "claim.", "storage-class.", "versioned-history.",
 }
 
 // validateStorageClassConfig validates a storage-class.<type> per-type

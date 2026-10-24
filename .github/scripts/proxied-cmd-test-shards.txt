@@ -34,6 +34,7 @@
 34 1 TestProxiedServerReadyClaimConcurrent
 34 1 TestProxiedServerServeActivatesTheEventsJournal
 34 1 TestProxiedServerServeRelease
+34 1 TestProxiedServerVersionedHistorySwitchChecksTheLegacyProtosAPourCopies
 
 34 2 TestProxiedServerDepListSingleIDWarnsOnDroppedExternalEdge
 34 2 TestProxiedServerGateList
@@ -69,6 +70,7 @@
 34 6 TestProxiedServerServeReadsTheJournalItJustWrote
 34 6 TestProxiedServerSwarm
 34 6 TestProxiedServerUpdate2B
+34 6 TestProxiedServerVersionedHistorySwitchRefusesAnUnrecordableGateTimeout
 34 6 TestProxiedServerWispList
 
 34 7 TestProxiedServerCloseConcurrent
@@ -156,6 +158,7 @@
 34 17 TestProxiedServerPrime
 34 17 TestProxiedServerSQLDatabaseFlag
 34 17 TestProxiedServerServeModeGate
+34 17 TestServerModeServeIgnoresGraphModeDependency
 
 34 18 TestProxiedServerClose3
 34 18 TestProxiedServerCount
@@ -254,6 +257,7 @@
 34 30 TestProxiedServerStatus
 34 30 TestProxiedServerTodo
 34 30 TestProxiedServerUpdate2
+34 30 TestProxiedServerVersionedHistoryServeActivatesTheProviderFromItsOwnRow
 
 34 31 TestProxiedServerCloseBeadGate
 34 31 TestProxiedServerComment

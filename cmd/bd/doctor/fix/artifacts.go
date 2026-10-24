@@ -1,17 +1,25 @@
 package fix
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/steveyegge/beads/internal/configfile"
+	"github.com/steveyegge/beads/internal/historicalsqlite"
 )
 
 // ClassicArtifacts removes beads classic artifacts found by scanning the path.
 // Only removes artifacts that are safe to delete:
 // - JSONL export artifacts (not issues.jsonl itself)
-// - SQLite WAL/SHM files and backup databases
+// - SQLite WAL/SHM files and backup databases, in a .beads on Dolt (SelectsDolt)
 // - Extra files in redirect-only .beads directories
+//
+// It never migrates a .beads directory's metadata, and leaves a .beads
+// directory in a format this build cannot open untouched (see
+// cleanBeadsDirArtifacts).
 func ClassicArtifacts(path string) error {
 	var removed, skipped, errCount int
 
@@ -59,8 +67,23 @@ func ClassicArtifacts(path string) error {
 
 // cleanBeadsDirArtifacts cleans artifacts from a single .beads directory.
 // Returns counts of removed, skipped, and errored items.
+//
+// The walk reaches the .beads directories of nested repositories, sub-projects
+// and worktrees, and command admission checked only the workspace doctor runs
+// in. So beadsDir's metadata is read as discovery reads it, without migrating
+// a legacy config.json into metadata.json, and a workspace in a format this
+// build cannot open is left byte-identical: configfile.Load would rewrite that
+// config.json, dropping keys it does not know, and the cleanup below would
+// remove files, the format marker among them, whose meaning this build does
+// not know.
 func cleanBeadsDirArtifacts(beadsDir string) (removed, skipped, errCount int) {
-	hasDolt := hasDoltDir(beadsDir)
+	cfg, err := configfile.LoadAndCheckWorkspaceFormat(beadsDir)
+	var formatErr *configfile.UnsupportedWorkspaceFormatError
+	if errors.As(err, &formatErr) {
+		return
+	}
+
+	hasDolt := hasDoltDir(beadsDir, cfg)
 	isRedirectExpected := isRedirectExpectedLocation(beadsDir)
 
 	// 1. Clean JSONL artifacts in dolt-native directories
@@ -72,7 +95,7 @@ func cleanBeadsDirArtifacts(beadsDir string) (removed, skipped, errCount int) {
 	}
 
 	// 2. Clean SQLite artifacts
-	r, s, e := cleanSQLiteArtifacts(beadsDir)
+	r, s, e := cleanSQLiteArtifacts(beadsDir, cfg)
 	removed += r
 	skipped += s
 	errCount += e
@@ -90,9 +113,16 @@ func cleanBeadsDirArtifacts(beadsDir string) (removed, skipped, errCount int) {
 	return
 }
 
-// hasDoltDir returns true if the .beads directory contains a dolt/ subdirectory.
-func hasDoltDir(beadsDir string) bool {
-	info, err := os.Stat(getDatabasePath(beadsDir))
+// hasDoltDir returns true if the Dolt database directory of the .beads
+// directory exists: the one cfg, beadsDir's metadata, resolves (respecting
+// dolt_data_dir), or beadsDir/dolt when there is no metadata or it does not
+// load (cfg nil).
+func hasDoltDir(beadsDir string, cfg *configfile.Config) bool {
+	doltPath := filepath.Join(beadsDir, "dolt")
+	if cfg != nil {
+		doltPath = cfg.DatabasePath(beadsDir)
+	}
+	info, err := os.Stat(doltPath)
 	return err == nil && info.IsDir()
 }
 
@@ -182,8 +212,37 @@ func cleanJSONLArtifacts(beadsDir string) (removed, skipped, errCount int) {
 	return
 }
 
-// cleanSQLiteArtifacts removes leftover SQLite database files.
-func cleanSQLiteArtifacts(beadsDir string) (removed, skipped, errCount int) {
+// SelectsDolt reports whether the .beads directory beadsDir, whose metadata is
+// cfg (nil when it has none or it does not load), is on Dolt, so that its
+// beads.db, beads.db-wal, beads.db-shm and beads.backup-*.db are leftovers of
+// an earlier SQLite era rather than a live backend's files. The Classic
+// Artifacts scan (doctor.scanSQLiteArtifacts) reports SQLite files only where
+// this holds and cleanSQLiteArtifacts removes them only there, so the two
+// halves share one predicate. GetBackend reads a backend this build does not
+// recognize as Dolt, so that is checked too. It also reads as Dolt a Beads
+// Classic workspace, whose metadata predates the backend key or which has
+// none, so the historical SQLite layouts command admission refuses to open
+// (historicalsqlite.IsWorkspace) are not Dolt either: there those files still
+// hold the only copy of the workspace's data.
+func SelectsDolt(beadsDir string, cfg *configfile.Config) bool {
+	if cfg.GetBackend() != configfile.BackendDolt ||
+		(cfg != nil && !configfile.IsSupportedBackend(cfg.Backend)) {
+		return false
+	}
+	return !historicalsqlite.IsWorkspace(beadsDir, cfg)
+}
+
+// cleanSQLiteArtifacts removes leftover SQLite database files from a .beads
+// directory that is on Dolt (SelectsDolt with its metadata, cfg), the only
+// place the scan reports them. In a workspace on another backend, or a
+// historical SQLite one, they are that backend's files: a SQLite workspace's
+// beads.db-wal can hold committed transactions not yet checkpointed into
+// beads.db.
+func cleanSQLiteArtifacts(beadsDir string, cfg *configfile.Config) (removed, skipped, errCount int) {
+	if !SelectsDolt(beadsDir, cfg) {
+		return
+	}
+
 	entries, err := os.ReadDir(beadsDir)
 	if err != nil {
 		return
@@ -233,8 +292,10 @@ func cleanSQLiteArtifacts(beadsDir string) (removed, skipped, errCount int) {
 }
 
 // cleanCruftBeadsDirFiles removes everything from a .beads directory except
-// the redirect file, .gitkeep, and (when a redirect file is present)
-// metadata.json.
+// the redirect file, .gitkeep, and (when a redirect file is present) the
+// directory's own metadata: metadata.json, or a legacy config.json, which
+// this walk does not migrate. The Classic Artifacts scan
+// (doctor.scanCruftBeadsDir) reports exactly the entries this removes.
 func cleanCruftBeadsDirFiles(beadsDir string) (removed, errCount int) {
 	entries, err := os.ReadDir(beadsDir)
 	if err != nil {
@@ -248,6 +309,13 @@ func cleanCruftBeadsDirFiles(beadsDir string) (removed, errCount int) {
 	// the shared Gas Town root). Deleting metadata.json here would corrupt
 	// that source rig's identity while leaving the redirect itself intact,
 	// so never delete it when a redirect is present in the same directory.
+	// A legacy config.json there is kept too, unmigrated, but it is inert:
+	// ResolveRedirect reads the source's dolt_database only from
+	// metadata.json, and this walk no longer migrates (see
+	// cleanBeadsDirArtifacts). bd wrote config.json only before its rename
+	// to metadata.json, which predates dolt_database, so one bd wrote names
+	// no database to route to. It is kept because the cleanup cannot vouch
+	// for what it holds, not for routing.
 	hasRedirect := false
 	for _, entry := range entries {
 		if entry.Name() == "redirect" {
@@ -262,7 +330,7 @@ func cleanCruftBeadsDirFiles(beadsDir string) (removed, errCount int) {
 		if name == "redirect" || name == ".gitkeep" {
 			continue
 		}
-		if name == "metadata.json" && hasRedirect {
+		if (name == "metadata.json" || name == "config.json") && hasRedirect {
 			continue
 		}
 

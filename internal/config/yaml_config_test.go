@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -245,6 +247,86 @@ func walkMap(m map[string]interface{}, parts []string) interface{} {
 		}
 	}
 	return cur
+}
+
+// A line of bufio.MaxScanTokenSize bytes or more stops the flat-key path's
+// line scanner partway through the document. updateYamlKey used to return the
+// lines read up to that point with a nil error, which setYamlConfigAtPath then
+// wrote over config.yaml, dropping the long line and everything after it.
+// A line one byte shorter still fits, and must get the same rewrite a short
+// document gets rather than the refusal.
+func TestUpdateYamlKeyRejectsOversizeLine(t *testing.T) {
+	doc := func(line string) string { return "k1: v1\n" + line + "\nk2: v2" }
+	atLimit := strings.Repeat("x", bufio.MaxScanTokenSize)
+	underLimit := strings.Repeat("x", bufio.MaxScanTokenSize-1)
+
+	tests := []struct {
+		name    string
+		content string
+		key     string
+		want    string
+		wantErr bool
+	}{
+		{name: "line of MaxScanTokenSize bytes, key present", content: doc(atLimit), key: "k1", wantErr: true},
+		{name: "line of MaxScanTokenSize bytes, key absent", content: doc(atLimit), key: "k3", wantErr: true},
+		{
+			name:    "line of MaxScanTokenSize-1 bytes, key present",
+			content: doc(underLimit),
+			key:     "k1",
+			want:    "k1: \"zz\"\n" + underLimit + "\nk2: v2",
+		},
+		{
+			name:    "line of MaxScanTokenSize-1 bytes, key absent",
+			content: doc(underLimit),
+			key:     "k3",
+			want:    doc(underLimit) + "\n\nk3: \"zz\"",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := updateYamlKey(tt.content, tt.key, "zz")
+			if tt.wantErr {
+				if !errors.Is(err, bufio.ErrTooLong) {
+					t.Errorf("updateYamlKey() error = %v, want %v", err, bufio.ErrTooLong)
+				}
+				if got != "" {
+					t.Errorf("updateYamlKey() returned %d bytes of the %d-byte document, want none", len(got), len(tt.content))
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("updateYamlKey() error = %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("updateYamlKey() returned %d bytes, want the %d-byte rewrite", len(got), len(tt.want))
+			}
+		})
+	}
+}
+
+// setYamlConfigAtPath is the read, rewrite, write step behind bd config set for
+// an undotted key. When updateYamlKey refuses a document with an oversize line,
+// the error has to come back before the write, so config.yaml keeps every byte
+// it had.
+func TestSetYamlConfigAtPathOversizeLineLeavesFileUntouched(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	before := "no-db: false\n# " + strings.Repeat("x", bufio.MaxScanTokenSize) + "\njson: true\n"
+	if err := os.WriteFile(configPath, []byte(before), 0o600); err != nil {
+		t.Fatalf("failed to write config.yaml: %v", err)
+	}
+
+	if err := setYamlConfigAtPath(configPath, "no-db", "true"); !errors.Is(err, bufio.ErrTooLong) {
+		t.Errorf("setYamlConfigAtPath() error = %v, want %v", err, bufio.ErrTooLong)
+	}
+
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("failed to read config.yaml: %v", err)
+	}
+	if string(after) != before {
+		t.Errorf("config.yaml is %d bytes after the refused set, want the original %d bytes unchanged", len(after), len(before))
+	}
 }
 
 func TestFormatYamlValue(t *testing.T) {
@@ -539,6 +621,48 @@ func TestWorkspaceYamlValueStrictRejectsNullAndWrongParent(t *testing.T) {
 			}
 			if _, _, err := WorkspaceYamlValueStrict(beadsDir, "dolt.shared-server"); err == nil {
 				t.Fatalf("config %q should be rejected", body)
+			}
+		})
+	}
+}
+
+// WorkspaceYamlSettingWithLocal reads a null at the key or at a parent of it
+// (every child of a section commented out) as unset in that layer, as bd's
+// merged reader does, and falls through to the next layer; every other shape
+// error is still returned.
+func TestWorkspaceYamlSettingWithLocalReadsNullAsUnset(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		files       map[string]string
+		wantValue   string
+		wantPresent bool
+		wantErr     bool
+	}{
+		{name: "commented-out section", files: map[string]string{"config.yaml": "dolt:\n  # mode: server\n"}},
+		{name: "null value", files: map[string]string{"config.yaml": "dolt:\n  mode: null\n"}},
+		{name: "null dotted value", files: map[string]string{"config.yaml": "dolt.mode: ~\n"}},
+		{name: "null local section falls through", files: map[string]string{"config.yaml": "dolt:\n  mode: server\n", LocalConfigFileName: "dolt:\n"}, wantValue: "server", wantPresent: true},
+		{name: "set value", files: map[string]string{"config.yaml": "dolt:\n  mode: server\n"}, wantValue: "server", wantPresent: true},
+		{name: "scalar parent", files: map[string]string{"config.yaml": "dolt: false\n"}, wantErr: true},
+		{name: "list value", files: map[string]string{"config.yaml": "dolt:\n  mode: []\n"}, wantErr: true},
+		{name: "unparseable", files: map[string]string{"config.yaml": "dolt: [unterminated\n"}, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			beadsDir := filepath.Join(t.TempDir(), ".beads")
+			if err := os.MkdirAll(beadsDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for name, body := range tc.files {
+				if err := os.WriteFile(filepath.Join(beadsDir, name), []byte(body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			value, present, err := WorkspaceYamlSettingWithLocal(beadsDir, "dolt.mode")
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, want error %v", err, tc.wantErr)
+			}
+			if !tc.wantErr && (value != tc.wantValue || present != tc.wantPresent) {
+				t.Fatalf("= (%q, %v), want (%q, %v)", value, present, tc.wantValue, tc.wantPresent)
 			}
 		})
 	}
