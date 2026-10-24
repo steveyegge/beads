@@ -22,7 +22,7 @@ package schema
 // ALTER, so a bundle that forgot the direct statement still lands the right
 // schema. Run through a 2.3.x CLI, TestCLIBundleMatchesRuntimeCommittedSchema
 // went green that way against the then-pinned 2.2.0 sql-server, and with the
-// CLI now pinned at 2.5.1 it cannot catch a dropped override on any run
+// CLI now pinned at 2.6.0 it cannot catch a dropped override on any run
 // (probed 2026-10-21: a prepared ADD COLUMN vanishes on the 2.2.0 CLI and
 // lands on 2.5.1). So every override below must be justified against the
 // pre-2.3 behavior, and the guards that still work need no Dolt binary at

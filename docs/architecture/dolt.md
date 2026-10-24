@@ -26,7 +26,7 @@ Install a specific version. Do not install `releases/latest` — see
 version to use and why the pin exists.
 
 ```bash
-DOLT_VERSION=2.5.1   # see "Which Dolt version to install" below
+DOLT_VERSION=2.6.0   # see "Which Dolt version to install" below
 
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
 arch=$(uname -m | sed -e 's/^x86_64$/amd64/' -e 's/^aarch64$/arm64/')
@@ -44,14 +44,14 @@ against the pin below.
 
 ### Which Dolt version to install
 
-Beads pins Dolt to **2.5.1**. CI installs that same pin with
+Beads pins Dolt to **2.6.0**. CI installs that same pin with
 `scripts/ci/install-dolt.sh`, which records the per-version measurements and
 the criterion for raising it; raise the pin here and in that script together.
 
 This pin is about the standalone `dolt` CLI, which only server and
 proxied-server mode use. Embedded mode is unaffected either way: it links the
-Dolt 2.5.1 engine into `bd` (`dolthub/driver` v2.4.1 with
-`github.com/dolthub/dolt/go` at the v2.5.1 release, in `go.mod`), no matter
+Dolt 2.6.0 engine into `bd` (`dolthub/driver` v2.4.1 with
+`github.com/dolthub/dolt/go` at the v2.6.0 release, in `go.mod`), no matter
 which `dolt` CLI is on your PATH. The CLI pin tracks that engine, so every mode
 runs the same Dolt. `bd` recommends Dolt **2.5.0** or newer, the first release
 whose engine is correct on the query shape in the table below, and managed
@@ -97,7 +97,8 @@ immediately calling the procedure:
 | 2.4.1 | yes | **no row** | 0 / 250 |
 | 2.4.2 | yes | **no row** | 0 / 250 |
 | **2.5.0** | yes | correct | 0 / 500 |
-| **2.5.1** (pinned) | yes | correct | 0 / 500 |
+| **2.5.1** | yes | correct | 0 / 500 |
+| **2.6.0** (pinned) | yes | correct | 0 / 500; 0 / 1000 across fresh servers (2026-10-24) |
 
 "Opens a database `bd` creates" means `information_schema` reads and writes
 don't fail with `table has unknown fields`. Every row of that column is
@@ -108,6 +109,17 @@ reads of `issues` still succeed on the releases marked "no".
   (2026-10-21), and 0 / 60 on 2.4.1 (2026-10-10). The 2026-10-10 and
   2026-10-21 runs re-measured 2.3.1 as a positive control, confirming the
   method still reproduces the regression.
+- 2.6.0 (2026-10-24): 0 / 500 on one server, and 0 / 1000 across 50 fresh
+  servers of 20 databases each; the embedded engine (`go.mod`'s
+  `dolthub/dolt/go` at the v2.6.0 release) 0 / 100 on one open and 0 / 400
+  across 20 fresh opens. The regression hits databases created soon after a
+  server starts, so one long-running server under-reports it: that day 2.3.1,
+  the positive control, measured 0 / 300 on one server but 31 / 600 across 30
+  fresh servers of 20 databases each. Measure across fresh servers.
+- 2.6.0 changes `dolt_merge()` to walk the full commit graph when it picks a
+  merge base, as Git does. A long-running branch that has merged several times
+  can now report a conflict that 2.5.x resolved silently by taking the newer
+  change.
 - The `MAX`/`MIN` column is bee-ghosttrack's reproduction from
   [#7646](https://github.com/gastownhall/beads/pull/7646), reproduced on
   linux/amd64 and darwin/arm64. `bd`'s one query of that shape, the

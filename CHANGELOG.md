@@ -521,6 +521,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Embedded mode now runs the Dolt 2.6.0 engine, and the module needs Go
+  1.27.3.** `bd` links `dolthub/dolt/go` at the v2.6.0 release (with
+  `go-mysql-server` to match). Dolt's own `go.mod` declares `go 1.27.3`, so
+  the `go` line of beads' `go.mod` is now 1.27.3: a program that imports
+  `github.com/steveyegge/beads` needs Go 1.27.3 or newer. CI, the test
+  container and the hermetic Bazel Dolt now pin the `dolt` CLI and
+  `dolt sql-server` at 2.6.0; the recommended minimum stays 2.5.0. Dolt 2.6.0
+  makes `dolt_merge()` walk the full commit graph when it picks a merge base,
+  as Git does, so a long-running branch that has merged several times can now
+  report a conflict that 2.5.x resolved silently by taking the newer change.
 - Over an HTTP workspace, `bd ready --json` without `BD_JSON_ENVELOPE` no
   longer sends `GET /v0/beads/ready:count` after a page the limit cut short:
   the total only went into the stderr hint. It lists one row past the limit
