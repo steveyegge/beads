@@ -500,9 +500,11 @@ func TestWorkerEnvAutosyncWorkflowNeverArmsAutoMerge(t *testing.T) {
 // TestWorkerEnvSyncCopyAgainstFixture runs the real tools/rbe/worker-env-
 // sync-copy against a scratch checkout and a local gascity (reusing
 // rbe_worker_env_test.go's fixture): it overwrites the manifest and the pin
-// byte for byte, leaves everything else untouched, and fails loudly rather
-// than writing anything when gascity's platforms/BUILD.bazel carries no
-// pin to copy.
+// byte for byte with those of the commit REF names (main's own, not the
+// CDN's stale copy of main the fixture also serves, or a commit given as
+// REF), leaves everything else untouched, and fails loudly rather than
+// writing anything when gascity's platforms/BUILD.bazel carries no pin to
+// copy.
 func TestWorkerEnvSyncCopyAgainstFixture(t *testing.T) {
 	// worker-env-sync-copy runs only in worker-env-autosync.yml, on
 	// ubuntu-latest. It edits the pin with GNU `sed -i -E`; BSD sed (macOS)
@@ -523,8 +525,8 @@ func TestWorkerEnvSyncCopyAgainstFixture(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("worker-env-sync-copy: exit %d\n%s", code, out)
 	}
-	if !strings.Contains(out, "copied gascity main's worker-env ("+f.pin+")") {
-		t.Errorf("worker-env-sync-copy output %q, want it to report the copied pin %s", out, f.pin)
+	if !strings.Contains(out, "copied gascity main's worker-env ("+f.pin+") at gascity commit "+f.sha+"\n") {
+		t.Errorf("worker-env-sync-copy output %q, want it to report the copied pin %s and gascity's commit %s", out, f.pin, f.sha)
 	}
 	gotManifest, err := os.ReadFile(filepath.Join(beads, rbeWorkerEnvManifest))
 	if err != nil || string(gotManifest) != f.manifest {
@@ -539,14 +541,25 @@ func TestWorkerEnvSyncCopyAgainstFixture(t *testing.T) {
 		t.Errorf("worker-env-sync-copy touched an unrelated file: %q, %v", untouched, err)
 	}
 
+	// A commit as REF: that commit's manifest and pin.
+	beadsAtCommit := f.beads(t, f.manifest, f.pin)
+	rbeTestWrite(t, filepath.Join(beadsAtCommit, workerEnvSyncCopy), readPolicyFile(t, bazelPolicyRoot(t), workerEnvSyncCopy), 0o755)
+	code, out = f.run(t, beadsAtCommit, workerEnvSyncCopy+" "+f.staleSHA+"\n")
+	if code != 0 {
+		t.Fatalf("worker-env-sync-copy %s: exit %d\n%s", f.staleSHA, code, out)
+	}
+	if got, err := os.ReadFile(filepath.Join(beadsAtCommit, rbeWorkerEnvManifest)); err != nil || string(got) != rbeTestStaleManifest {
+		t.Errorf("worker-env.txt after copying commit %s = %q, %v; want that commit's manifest %q", f.staleSHA, got, err, rbeTestStaleManifest)
+	}
+	if got, err := os.ReadFile(filepath.Join(beadsAtCommit, rbeWorkerPlatformBuild)); err != nil || !strings.Contains(string(got), "\"worker-env\": \""+stalePin+"\",") {
+		t.Errorf("platforms/BUILD.bazel after copying commit %s = %q, %v; want its pin %s", f.staleSHA, got, err, stalePin)
+	}
+
 	// gascity's platforms/BUILD.bazel with no pin at all: nothing copied.
-	noPinGascity := t.TempDir()
-	rbeTestWrite(t, filepath.Join(noPinGascity, "main/tools/rbe/worker-env.txt"), "arch x86_64\n", 0o644)
-	rbeTestWrite(t, filepath.Join(noPinGascity, "main/platforms/BUILD.bazel"), "platform(\n    name = \"rbe_worker\",\n)\n", 0o644)
-	beadsNoPin := f.beads(t, rbeTestStaleManifest, stalePin)
+	noPin := newRBEWorkerEnvGascity(t, "arch x86_64\n", "platform(\n    name = \"rbe_worker\",\n)\n")
+	beadsNoPin := noPin.beads(t, rbeTestStaleManifest, stalePin)
 	rbeTestWrite(t, filepath.Join(beadsNoPin, workerEnvSyncCopy), readPolicyFile(t, bazelPolicyRoot(t), workerEnvSyncCopy), 0o755)
-	cmd := "WORKER_ENV_SYNC_URL=file://" + noPinGascity + " " + workerEnvSyncCopy + " main\n"
-	code, out = f.run(t, beadsNoPin, cmd)
+	code, out = noPin.run(t, beadsNoPin, workerEnvSyncCopy+" main\n")
 	if code == 0 || strings.Contains(out, "copied gascity") {
 		t.Errorf("worker-env-sync-copy with no gascity pin: exit %d\n%s, want a failure and nothing copied", code, out)
 	}
