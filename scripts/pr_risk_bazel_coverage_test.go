@@ -801,7 +801,8 @@ func TestBazelRetiredLanesCannotBeNarrowed(t *testing.T) {
 
 	// The scripts every lane's test runs under or through, and the whole
 	// setup-bazel action (its generated rc applies to every command).
-	scriptNarrow := regexp.MustCompile(`-test\.(short|run|skip|list|bench)|BEADS_TEST_SKIP|BEADS_TEST_EMBEDDED_DOLT|BEADS_TEST_PROXIED_SERVER|BEADS_TEST_ENV_RUN_DOLT|BEADS_TEST_REQUIRE_DOLT_CONTAINER|BEADS_TEST_DOLT_SERVER\b|TESTBRIDGE_TEST_ONLY|test_filter|test_arg|_filters\b|cache_test_results|eviction_retries|flaky|runs_per_test|test_sharding_strategy`)
+	const narrowOther = `BEADS_TEST_SKIP|BEADS_TEST_EMBEDDED_DOLT|BEADS_TEST_PROXIED_SERVER|BEADS_TEST_ENV_RUN_DOLT|BEADS_TEST_REQUIRE_DOLT_CONTAINER|BEADS_TEST_DOLT_SERVER\b|TESTBRIDGE_TEST_ONLY|test_filter|test_arg|_filters\b|cache_test_results|eviction_retries|flaky|runs_per_test|test_sharding_strategy`
+	scriptNarrow := regexp.MustCompile(`-test\.(short|run|skip|list|bench)|` + narrowOther)
 	files, _ := filepath.Glob(filepath.Join(root, "tools", "bazel", "*.sh"))
 	action, _ := filepath.Glob(filepath.Join(root, setupBazelActionDir, "*"))
 	files = append(files, action...)
@@ -819,10 +820,22 @@ func TestBazelRetiredLanesCannotBeNarrowed(t *testing.T) {
 		// here for pinnedShardTargets only (the dolt-server-cmd targets and
 		// the embedded lane's served targets, whose args are pinned
 		// above); pinnedShardWrapperUsers fails if anything else runs
-		// through it.
-		exempt := filepath.ToSlash(rel) == pinnedShardWrapper
-		if exempt {
+		// through it. go_test_offline.sh's --shard-manifest selects with
+		// -test.run (each listed test in exactly one shard:
+		// TestOfflineWrapperShardManifest) and refuses a forwarded one; it
+		// may use -test.run and nothing else here, and is reviewed for
+		// offlineWrapperTargets only (bd_managed_local_test, args pinned
+		// above).
+		narrow := scriptNarrow
+		switch filepath.ToSlash(rel) {
+		case pinnedShardWrapper:
+			narrow = nil
 			for _, e := range pinnedShardWrapperUsers(t, root) {
+				t.Error(e)
+			}
+		case offlineWrapper:
+			narrow = regexp.MustCompile(`-test\.(short|skip|list|bench)|` + narrowOther)
+			for _, e := range shWrapperUsers(t, root, offlineWrapper, offlineWrapperTargets, "offlineWrapperTargets") {
 				t.Error(e)
 			}
 		}
@@ -831,7 +844,7 @@ func TestBazelRetiredLanesCannotBeNarrowed(t *testing.T) {
 			if strings.HasPrefix(code, "#") {
 				continue
 			}
-			if scriptNarrow.MatchString(code) && !exempt {
+			if narrow != nil && narrow.MatchString(code) {
 				t.Errorf("%s:%d %q can select, skip or re-run the retired tiers' lanes' tests", rel, i+1, code)
 			}
 			for _, m := range regexp.MustCompile(`--config=([A-Za-z0-9_-]+)`).FindAllStringSubmatch(code, -1) {
@@ -921,8 +934,12 @@ func TestBazelRetiredLanesCannotBeNarrowed(t *testing.T) {
 				"BEADS_TEST_REQUIRE_DOLT_CONTAINER": "1", "BEADS_TEST_REQUIRE_SOCAT": "1", "GOMAXPROCS": "4",
 			},
 		},
+		// go_test_offline.sh runs exactly the manifest's tests, each in its
+		// shard (TestOfflineWrapperShardManifest), and the manifest lists
+		// exactly the TestManagedLocalProxied* tests bd_test compiles
+		// (TestManagedLocalShardManifest).
 		"//cmd/bd:bd_managed_local_test": {
-			[]string{"$(rootpath :bd_test)", "-test.run=^TestManagedLocalProxied", "-test.timeout=15m"},
+			[]string{"--shard-manifest=$(rootpath :managed_local_shards.txt)", "$(rootpath :bd_test)", "-test.timeout=15m"},
 			map[string]string{
 				"BEADS_TEST_BD_BINARY": "$(rlocationpath :bd_for_tests)", "BEADS_TEST_COMPACT_GC_FIXTURE": "$(rlocationpath :compact_gc_fixture)",
 				"BEADS_TEST_DOLT_SERVER": "local",
