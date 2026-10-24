@@ -462,10 +462,22 @@ jobs:
   # cache would not keep the PR green (pr.yml's ci-gate requires a remote
   # run, BAZEL_REMOTE) and would only make it slower, so fail fast. gascity
   # unreachable (exit 2: unknown) warns and proceeds: GitHub's availability
-  # never blocks a PR. The steps after decide run repository code (the PR's
-  # script, sparse-checked-out) but hold no secret and set no output: the
-  # job's outputs are decide's alone. nightly.yml runs the same check every
-  # night and opens a ci/infra issue.
+  # never blocks a PR. gascity's grace window: a re-pin gascity can roll back
+  # (a Go release) publishes a record (worker-env-grace.txt on gascity's
+  # rbe/worker-env-grace branch), and rbe-west keeps workers of the previous
+  # pin through its two-hour window. In mode remote, while the repository
+  # variable RBE_WORKER_ENV_GRACE is true (the rollout switch; delete it to
+  # roll back), the check passes WORKER_ENV_SYNC_GRACE=1: a copy at that
+  # previous pin inside the window exits 3, and the lanes proceed with a
+  # notice on those workers, so PRs stay green until beads' sync PR lands.
+  # gascity publishes the record about a minute after the re-pin, and
+  # worker-env-sync waits up to 150 seconds for it, inside this job's 5
+  # minutes. Only mode remote: fork-ro executes on the separate oss-fork
+  # pool, which has no previous-pin workers, and fork runs see no vars
+  # anyway. The steps after decide run repository code (the PR's script,
+  # sparse-checked-out) but hold no secret and set no output: the job's
+  # outputs are decide's alone. nightly.yml runs the same check every night,
+  # strict (no grace window), and opens a ci/infra issue.
   rbe:
     name: execution mode
     # Same-repo PRs (and merge_group/push/dispatch/schedule runs, which are
@@ -615,6 +627,7 @@ jobs:
         if: ${{ steps.decide.outputs.enabled == 'true' }}
         env:
           MODE: ${{ steps.decide.outputs.mode }}
+          WORKER_ENV_SYNC_GRACE: ${{ steps.decide.outputs.mode == 'remote' && vars.RBE_WORKER_ENV_GRACE == 'true' && '1' || '' }}
         run: |
           rc=0
           tools/rbe/worker-env-sync main || rc=$?
@@ -623,6 +636,9 @@ jobs:
             1)
               echo "::error title=Bazel lanes stopped before queueing::beads' worker-env pin is out of step with gascity main, so rbe-west has no worker for this run's remote actions (mode $MODE): copy tools/rbe/worker-env.txt and the worker-env pin in platforms/BUILD.bazel from gastownhall/gascity main (this job's summary has the diff and the line to commit; see tools/rbe/worker-env-sync)."
               exit 1
+              ;;
+            3)
+              echo "::notice title=rbe worker-env grace::beads' worker-env pin is gascity's previous pin, inside gascity's grace window: proceeding in mode $MODE on rbe-west's previous-pin workers. beads' worker-env sync PR must land before the window closes (this job's summary says when; see tools/rbe/worker-env-sync)."
               ;;
             *)
               echo "::warning title=rbe worker-env not checked::could not compare beads' worker-env pin with gascity main (exit $rc); proceeding in mode $MODE. If the lanes sit at 0 running actions, run tools/rbe/worker-env-sync."
