@@ -1818,9 +1818,12 @@ repository's push runs (`.github/scripts/main-ci-alert.sh`):
   commit's PR alone when there is no such run or the range cannot be
   read): a batch lands as one push.
 - It comments on each candidate (at most the newest ten) only when this
-  run turns the workflow red: its previous decided push run was green, or
-  there is none. While the workflow stays red, later reds update the issue
-  alone.
+  run turns the workflow red (its previous decided push run was green, or
+  there is none) and is the run's first attempt. While the workflow stays
+  red, later reds, and a re-run that goes red again, update the issue
+  alone. A runs or jobs API error does not lose the issue: the candidates
+  fall back to the head commit's PR (notified), or the job list to a link
+  to the run, with a warning.
 - A later green push run of the same workflow comments that it is green
   again, and the issue closes once no tracked workflow's latest decided
   push run on `main` is red. Cancelled runs (`main.yml` cancels older

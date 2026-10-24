@@ -124,6 +124,7 @@ func TestMainCIAlertWorkflow(t *testing.T) {
 		"RUN_ID":              "${{ github.event.workflow_run.id }}",
 		"RUN_URL":             "${{ github.event.workflow_run.html_url }}",
 		"RUN_CREATED_AT":      "${{ github.event.workflow_run.created_at }}",
+		"RUN_ATTEMPT":         "${{ github.event.workflow_run.run_attempt }}",
 		"CONCLUSION":          "${{ github.event.workflow_run.conclusion }}",
 		"HEAD_SHA":            "${{ github.event.workflow_run.head_sha }}",
 		"HEAD_COMMIT_MESSAGE": "${{ github.event.workflow_run.head_commit.message }}",
@@ -168,9 +169,10 @@ func TestMainCIAlertWorkflow(t *testing.T) {
 
 // mainCIAlertGHStub stands in for gh: it logs every call (one line each) and
 // every --body-file, lists the open issues it is given (GH_ISSUES, through
-// the call's --jq), answers a run's jobs (GH_JOBS), a workflow's runs
-// ($GH_RUNS_DIR/<file>.json) and a compare (GH_COMPARE; none set, or
-// GH_COMPARE_FAIL, fails it), and prints a new issue's URL.
+// the call's --jq), answers a run's jobs (GH_JOBS; GH_JOBS_FAIL fails it), a
+// workflow's runs ($GH_RUNS_DIR/<file>.json; GH_RUNS_FAIL fails it) and a
+// compare (GH_COMPARE; none set, or GH_COMPARE_FAIL, fails it), and prints a
+// new issue's URL.
 const mainCIAlertGHStub = `#!/usr/bin/env bash
 printf '%s\n' "$*" >>"$GH_LOG"
 prev=
@@ -185,9 +187,10 @@ case "$1 $2" in
 	"api "*)
 		for a in "$@"; do case "$a" in repos/*) path=$a ;; esac; done
 		case "$path" in
-			*/jobs*) printf '%s\n' "$GH_JOBS" ;;
+			*/jobs*) [ -z "${GH_JOBS_FAIL:-}" ] || { echo "gh: jobs failed" >&2; exit 1; }; printf '%s\n' "$GH_JOBS" ;;
 			*/compare/*) [ -n "${GH_COMPARE:-}" ] && [ -z "${GH_COMPARE_FAIL:-}" ] || { echo "gh: compare failed" >&2; exit 1; }; printf '%s\n' "$GH_COMPARE" ;;
 			*/workflows/*/runs*)
+				[ -z "${GH_RUNS_FAIL:-}" ] || { echo "gh: HTTP 502" >&2; exit 1; }
 				file=${path#*/workflows/}; file=${file%%/runs*}
 				if [ -f "$GH_RUNS_DIR/$file.json" ]; then cat "$GH_RUNS_DIR/$file.json"; else echo '{"workflow_runs":[]}'; fi ;;
 			*) echo "unexpected api path $path" >&2; exit 1 ;;
@@ -250,7 +253,7 @@ func runMainCIAlert(t *testing.T, env map[string]string, runs map[string][]mainC
 		"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"), "GH_LOG=" + log, "GH_RUNS_DIR=" + runsDir,
 		"GITHUB_REPOSITORY=gastownhall/beads", "GH_TOKEN=token", "GH_ISSUES=[]", `GH_JOBS={"jobs":[]}`,
 		"WORKFLOW_NAME=Bazel", "RUN_ID=555", "RUN_URL=https://github.com/gastownhall/beads/actions/runs/555",
-		"RUN_CREATED_AT=2026-10-24T10:00:00Z", "HEAD_SHA=" + strings.Repeat("d", 40),
+		"RUN_CREATED_AT=2026-10-24T10:00:00Z", "RUN_ATTEMPT=1", "HEAD_SHA=" + strings.Repeat("d", 40),
 		"HEAD_COMMIT_MESSAGE=fix(dolt): retry the dial (#123)\n\nbody line (#999)",
 	}
 	for k, v := range env {
@@ -311,14 +314,16 @@ func TestMainCIAlertScript(t *testing.T) {
 		return out
 	}
 	for _, c := range []struct {
-		name     string
-		env      map[string]string
-		runs     map[string][]mainCIAlertRun
-		want     []string // gh calls (prefixes of log lines)
-		notWant  []string // gh calls that must not happen
-		bodyHas  []string
-		bodyNot  []string
-		wantCode int
+		name    string
+		env     map[string]string
+		runs    map[string][]mainCIAlertRun
+		want    []string // gh calls (prefixes of log lines)
+		notWant []string // gh calls that must not happen
+		bodyHas []string
+		bodyNot []string
+		// outputHas: the script's own output must contain this (a warning).
+		outputHas string
+		wantCode  int
 	}{
 		{
 			name: "red, no issue open",
@@ -427,6 +432,30 @@ func TestMainCIAlertScript(t *testing.T) {
 			want:    []string{compareCall, "pr comment 120 "},
 			bodyNot: []string{"red-2026-10-24T11"},
 		},
+		{
+			name:      "red, the runs API fails: the issue opens with the head commit's PR, notified",
+			env:       map[string]string{"CONCLUSION": "failure", "GH_RUNS_FAIL": "1", "GH_COMPARE": batch},
+			runs:      map[string][]mainCIAlertRun{"bazel.yml": {red("2026-10-24T09:00:00Z")}},
+			want:      []string{"issue create --repo gastownhall/beads", "pr comment 123 "},
+			notWant:   []string{"api repos/gastownhall/beads/compare/", "pr comment 120"},
+			bodyHas:   []string{"Candidates: #123 (the head commit's alone"},
+			outputHas: "::warning",
+		},
+		{
+			name:      "red, the jobs API fails: the issue still opens",
+			env:       map[string]string{"CONCLUSION": "failure", "GH_JOBS_FAIL": "1"},
+			want:      []string{"issue create --repo gastownhall/beads", "pr comment 123 "},
+			bodyHas:   []string{"Failed jobs: the run's jobs could not be listed"},
+			outputHas: "::warning",
+		},
+		{
+			name:    "red again on a re-run attempt: the issue alone, no PR comment",
+			env:     map[string]string{"CONCLUSION": "failure", "GH_COMPARE": batch, "RUN_ATTEMPT": "2"},
+			runs:    map[string][]mainCIAlertRun{"bazel.yml": {green("2026-10-24T09:00:00Z")}},
+			want:    []string{compareCall, "issue create --repo gastownhall/beads"},
+			notWant: []string{"pr comment"},
+			bodyHas: []string{"Candidates: #120, #121, #123", "attempt 2 of this run"},
+		},
 		{name: "cancelled: nothing", env: map[string]string{"CONCLUSION": "cancelled", "GH_ISSUES": open42}, notWant: []string{"issue", "pr comment", "api", "label"}},
 		{name: "skipped: nothing", env: map[string]string{"CONCLUSION": "skipped", "GH_ISSUES": open42}, notWant: []string{"issue", "pr comment", "api", "label"}},
 		{
@@ -509,6 +538,9 @@ func TestMainCIAlertScript(t *testing.T) {
 			if strings.Contains(c.name, "comment fails") && !strings.Contains(out, "::warning") {
 				t.Errorf("a failed PR comment printed no warning:\n%s", out)
 			}
+			if c.outputHas != "" && !strings.Contains(out, c.outputHas) {
+				t.Errorf("output lacks %q:\n%s", c.outputHas, out)
+			}
 		})
 	}
 	// Env it cannot do without fails the job (a broken alert must show).
@@ -520,6 +552,11 @@ func TestMainCIAlertScript(t *testing.T) {
 	}
 	if code, out, _, _ := runMainCIAlert(t, map[string]string{"CONCLUSION": "failure", "WORKFLOW_NAME": "Nightly"}, nil); code == 0 {
 		t.Errorf("an untracked workflow: exit 0, want a failure\n%s", out)
+	}
+	for _, attempt := range []string{"", "0", "x", "2a", "-1"} {
+		if code, out, calls, _ := runMainCIAlert(t, map[string]string{"CONCLUSION": "failure", "RUN_ATTEMPT": attempt}, nil); code == 0 || calls != "" {
+			t.Errorf("RUN_ATTEMPT %q: exit %d, gh calls %q; want a failure before any call\n%s", attempt, code, calls, out)
+		}
 	}
 	// The label it files under is the one the workflow and docs name.
 	if script := readPolicyFile(t, sourceRepoRoot(t), mainCIAlertScript); !regexp.MustCompile(`(?m)^label="` + regexp.QuoteMeta(mainCIAlertLabel) + `"$`).MatchString(script) {

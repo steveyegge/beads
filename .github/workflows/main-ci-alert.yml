@@ -61,6 +61,7 @@ jobs:
           RUN_ID: ${{ github.event.workflow_run.id }}
           RUN_URL: ${{ github.event.workflow_run.html_url }}
           RUN_CREATED_AT: ${{ github.event.workflow_run.created_at }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
           CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           HEAD_COMMIT_MESSAGE: ${{ github.event.workflow_run.head_commit.message }}

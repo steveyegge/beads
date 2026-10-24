@@ -17,8 +17,11 @@
 #       previous decided push run's head and this run's head (the head
 #       commit's alone when that range cannot be read). Comment on each
 #       candidate too, but only when this turns the workflow red (its
-#       previous decided push run was green, or there is none): a later red
-#       of the same workflow updates the issue alone.
+#       previous decided push run was green, or there is none) and is the
+#       run's first attempt: a later red of the same workflow, or a re-run
+#       that went red again, updates the issue alone. A runs or jobs API
+#       error leaves those parts out (head-commit candidates, notified; no
+#       job list) with a warning, rather than losing the issue.
 #   success
 #       with the issue open: comment when this workflow's previous decided
 #       push run was red, listing what is still red, and close the issue
@@ -31,8 +34,9 @@
 # latest unless the runs API lists a newer one.
 #
 # Env: GITHUB_REPOSITORY; GH_TOKEN (issues: write, pull-requests: write,
-# actions: read); the triggering run's WORKFLOW_NAME, RUN_ID, RUN_URL,
-# RUN_CREATED_AT, CONCLUSION, HEAD_SHA and HEAD_COMMIT_MESSAGE.
+# actions: read, contents: read); the triggering run's WORKFLOW_NAME, RUN_ID,
+# RUN_URL, RUN_CREATED_AT, RUN_ATTEMPT, CONCLUSION, HEAD_SHA and
+# HEAD_COMMIT_MESSAGE.
 
 set -euo pipefail
 export LC_ALL=C
@@ -65,6 +69,10 @@ done
 }
 [[ "${RUN_CREATED_AT:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || {
 	echo "::error::main-ci-alert.sh: RUN_CREATED_AT '${RUN_CREATED_AT:-}' is not a UTC timestamp"
+	exit 1
+}
+[[ "${RUN_ATTEMPT:-}" =~ ^[1-9][0-9]*$ ]] || {
+	echo "::error::main-ci-alert.sh: RUN_ATTEMPT '${RUN_ATTEMPT:-}' is not a run attempt"
 	exit 1
 }
 run_url=${RUN_URL:?RUN_URL is unset}
@@ -125,7 +133,12 @@ if [[ "$conclusion" != success ]]; then
 	if [[ "$subject" =~ \(#([0-9]+)\)$ ]]; then
 		head_pr=${BASH_REMATCH[1]}
 	fi
-	runs=$(decided_runs "$file")
+	# A runs API error must not lose the issue: without the previous run,
+	# the candidates are the head commit's and they are notified.
+	runs=$(decided_runs "$file") || {
+		echo "::warning::main-ci-alert.sh: could not list $workflow's push runs on main; the candidates are the head commit's"
+		runs=
+	}
 	read -r prev_conclusion prev_sha prev_url <<<"$(previous_run "$runs")" || true
 	# The candidates: every PR the push range names, oldest first, from this
 	# workflow's previous decided push run's head to this run's (a batch
@@ -149,19 +162,31 @@ if [[ "$conclusion" != success ]]; then
 		candidates=$(printf '#%s, ' "${prs[@]}")
 		candidates=${candidates%, }
 	fi
-	# Notify the candidates only when this turns the workflow red, and at most
-	# the newest ten of them (a range that long means earlier runs never
-	# decided; the issue lists them all).
-	notify=false
-	if [[ -z "${prev_conclusion:-}" || "$prev_conclusion" == success ]]; then
-		notify=true
+	# Notify the candidates only when this turns the workflow red, on the
+	# run's first attempt (a re-run that went red again reached them, or was
+	# kept from them, the first time), and at most the newest ten of them (a
+	# range that long means earlier runs never decided; the issue lists them
+	# all).
+	notify=true
+	quiet=
+	if [[ -n "${prev_conclusion:-}" && "$prev_conclusion" != success ]]; then
+		notify=false
+		quiet="$workflow was already red on main before this push ($prev_url), so the candidates were not notified."
+	elif ((RUN_ATTEMPT > 1)); then
+		notify=false
+		quiet="This is attempt $RUN_ATTEMPT of this run, so the candidates were not notified again."
 	fi
 	notified=("${prs[@]}")
 	if ((${#notified[@]} > 10)); then
 		notified=("${notified[@]: -10}")
 	fi
+	jobs_listed=true
 	jobs=$(gh api --paginate "repos/$repo/actions/runs/$RUN_ID/jobs?per_page=100" |
-		jq -r '.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled") | "- [\(.name)](\(.html_url)): \(.conclusion)"')
+		jq -r '.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled") | "- [\(.name)](\(.html_url)): \(.conclusion)"') || {
+		echo "::warning::main-ci-alert.sh: could not list run $RUN_ID's jobs; the issue links the run instead"
+		jobs_listed=false
+		jobs=
+	}
 	{
 		printf '**%s** is %s on main at %s: %s\n\n' "$workflow" "$conclusion" "$sha" "$run_url"
 		# shellcheck disable=SC2016 # Markdown backticks, not a command
@@ -172,12 +197,14 @@ if [[ "$conclusion" != success ]]; then
 			printf 'Candidates: none, no PR number in the pushed commits'"'"' subjects (%s; a direct push?)\n' "$range"
 		fi
 		if [[ "$notify" != true ]]; then
-			printf '%s was already red on main before this push (%s), so the candidates were not notified.\n' "$workflow" "$prev_url"
+			printf '%s\n' "$quiet"
 		elif ((${#notified[@]} < ${#prs[@]})); then
 			printf 'Notified the newest %s of them.\n' "${#notified[@]}"
 		fi
 		printf '\n'
-		if [[ -n "$jobs" ]]; then
+		if [[ "$jobs_listed" != true ]]; then
+			printf 'Failed jobs: the run'"'"'s jobs could not be listed; see the run.\n'
+		elif [[ -n "$jobs" ]]; then
 			printf 'Failed jobs:\n%s\n' "$jobs"
 		else
 			printf 'Failed jobs: none listed (no job ran: a startup failure, or the run was cut short).\n'
