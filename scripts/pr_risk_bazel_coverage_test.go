@@ -142,8 +142,9 @@ func runDecisionStep(t *testing.T, step ciWorkflowStep, f rbeFacts, with map[str
 	return runBazelRBEDecision(t, step.Run, env)
 }
 
-// prGateFor: pr.yml's ci-gate scenario for one run whose Bazel call took
-// this mode with every lane that runs in it passing.
+// prGateFor: pr.yml's ci-gate scenario for one run on event whose Bazel call
+// took this mode with every lane that runs in it passing (lanes: the call's
+// on that event, bazelPRCallLanesFor).
 func prGateFor(t *testing.T, lanes map[string]map[string]bool, event, mode string) bazelGateScenario {
 	t.Helper()
 	outputs := map[string]string{}
@@ -155,11 +156,12 @@ func prGateFor(t *testing.T, lanes map[string]map[string]bool, event, mode strin
 	return bazelGateScenario{
 		name: fmt.Sprintf("%s mode %s", event, mode), event: event,
 		mode: mode, enabled: bazelModeEnabled(mode), call: "success",
-		outputs: outputs,
+		outputs: outputs, callWith: prCallWithFor(t, event),
 	}
 }
 
-// bazelPRCallLanes: the modes each bazel.yml lane runs in under pr.yml's call.
+// bazelPRCallLanes: the modes each bazel.yml lane runs in under a call with
+// these inputs (pr.yml's, the scope resolved: prCallWith).
 func bazelPRCallLanes(t *testing.T, with map[string]string) map[string]map[string]bool {
 	t.Helper()
 	lanes := map[string]map[string]bool{}
@@ -187,7 +189,13 @@ func TestPRGateRequiresRemoteBazelLanes(t *testing.T) {
 	}
 	rbeStep := readCIWorkflow(t, bazelWorkflowName).job(t, bazelRBEJobName).Steps[0]
 	gateStep := pr.job(t, "ci-gate").step(t, "Evaluate CI gate")
-	lanes := bazelPRCallLanes(t, call.With)
+	// The call's lanes on each event: a merge group's scope turns the
+	// Dolt-tier lanes off (TestCIScopePRGate).
+	lanesFor := map[string]map[string]map[string]bool{}
+	for _, event := range rbeGateEvents {
+		lanesFor[event] = bazelPRCallLanesFor(t, event)
+	}
+	lanes := lanesFor["pull_request"]
 
 	required := strings.Fields(gateStep.Env["CI_GATE_REQUIRED"])
 	if !contains(required, bazelRemoteGateID) {
@@ -218,7 +226,7 @@ func TestPRGateRequiresRemoteBazelLanes(t *testing.T) {
 		pass, ok := gateMemo[key]
 		if !ok {
 			var log string
-			pass, log = runPRGateStep(t, gateStep, prGateFor(t, lanes, f.event, mode))
+			pass, log = runPRGateStep(t, gateStep, prGateFor(t, lanesFor[f.event], f.event, mode))
 			gateMemo[key] = pass
 			if !pass && !regexp.MustCompile(`::error::`+bazelRemoteGateID+`\b`).MatchString(log) {
 				t.Errorf("%v (mode %s): red gate does not name %s:\n%s", f, mode, bazelRemoteGateID, log)
@@ -261,7 +269,7 @@ func TestPRGateRequiresRemoteBazelLanes(t *testing.T) {
 		if out["mode"] != c.mode {
 			t.Errorf("%s: mode = %q, want %s", c.name, out["mode"], c.mode)
 		}
-		if pass, log := runPRGateStep(t, gateStep, prGateFor(t, lanes, c.f.event, out["mode"])); pass != c.pass {
+		if pass, log := runPRGateStep(t, gateStep, prGateFor(t, lanesFor[c.f.event], c.f.event, out["mode"])); pass != c.pass {
 			t.Errorf("%s: pr.yml gate pass = %v, want %v\n%s", c.name, pass, c.pass, log)
 		}
 	}
