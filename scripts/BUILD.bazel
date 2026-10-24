@@ -70,6 +70,7 @@ go_test(
         "rbe_worker_env_test.go",
         "repo_helpers_test.go",
         "worker_env_autosync_test.go",
+        "worker_env_sync_automerge_test.go",
     ],  # keep
     data = [
         "//:repo_other_files",

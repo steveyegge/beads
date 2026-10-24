@@ -19,24 +19,36 @@ import (
 // worker-env-autosync.yml closes the #7419 gap: nightly.yml's rbe-worker-
 // env-sync job only opens a ci/infra issue for a human to fix a gascity
 // re-pin (#7387's ~100-minute stall); this instead runs tools/rbe/worker-
-// env-sync every 15 minutes and, on a real mismatch (exit 1), copies
-// gascity main's manifest and pin (tools/rbe/worker-env-sync-copy) and
-// opens or updates a fixed-branch PR labeled status/needs-review-auto, which
-// lands through the automated review and the merge queue.
+// env-sync as soon as gascity reports a re-pin (repository_dispatch) and
+// every 15 minutes, and, on a real mismatch (exit 1), copies gascity's
+// manifest and pin (tools/rbe/worker-env-sync-copy) and opens or updates a
+// fixed-branch PR. With WORKER_ENV_SYNC_AUTOMERGE == 'true' the PR carries
+// no review label and worker-env-sync-automerge.yml verifies it and arms
+// auto-merge; otherwise it is labeled status/needs-review-auto and lands
+// through the automated review and the merge queue.
 const (
 	workerEnvAutosyncWorkflow = "worker-env-autosync.yml"
 	workerEnvAutosyncJob      = "autosync"
 	workerEnvAutosyncBranch   = "bot/worker-env-sync"
 	workerEnvSyncCopy         = "tools/rbe/worker-env-sync-copy"
+	// gascity's repository_dispatch event type on a push to its main that
+	// moves the worker-env pin; client_payload {"sha", "pin"}.
+	workerEnvRepinnedEvent = "gascity-worker-env-repinned"
+	// The repository variable that turns the unreviewed path on. Unset (or
+	// anything but 'true'): today's review path, the rollback.
+	workerEnvAutomergeVar = "${{ vars.WORKER_ENV_SYNC_AUTOMERGE }}"
+	workerEnvPickStep     = "Pick the gascity commit to compare with"
 )
 
-// TestWorkerEnvAutosyncWorkflowTriggersOnScheduleAndDispatchOnly: the App
-// private key this job mints is a secret of the autofix environment
-// (deployment-branch policy: main only), and the only events that can ever
-// run on main without a fork in the loop are schedule and workflow_dispatch
-// -- pull_request (or pull_request_target) here would hand a fork a path to
-// it.
-func TestWorkerEnvAutosyncWorkflowTriggersOnScheduleAndDispatchOnly(t *testing.T) {
+// TestWorkerEnvAutosyncWorkflowTriggers: the App private keys this job mints
+// are secrets of the autofix environment (deployment-branch policy: main
+// only), and the only events that can ever run on main without a fork in
+// the loop are schedule, workflow_dispatch and repository_dispatch (which
+// only a token with write access to this repository can send: gascity's
+// gascity-worker-env-repinned, within a minute of its re-pin, instead of up
+// to 15 minutes later on the cron) -- pull_request (or
+// pull_request_target) here would hand a fork a path to them.
+func TestWorkerEnvAutosyncWorkflowTriggers(t *testing.T) {
 	var parsed struct {
 		On map[string]any `yaml:"on"`
 	}
@@ -44,11 +56,15 @@ func TestWorkerEnvAutosyncWorkflowTriggersOnScheduleAndDispatchOnly(t *testing.T
 	if err := yaml.Unmarshal([]byte(text), &parsed); err != nil {
 		t.Fatal(err)
 	}
-	if got := len(parsed.On); got != 2 {
-		t.Fatalf("%s on: has %d triggers (%v), want exactly schedule and workflow_dispatch", workerEnvAutosyncWorkflow, got, parsed.On)
+	if got := len(parsed.On); got != 3 {
+		t.Fatalf("%s on: has %d triggers (%v), want exactly schedule, workflow_dispatch and repository_dispatch", workerEnvAutosyncWorkflow, got, parsed.On)
 	}
 	if _, ok := parsed.On["workflow_dispatch"]; !ok {
 		t.Errorf("%s has no workflow_dispatch trigger", workerEnvAutosyncWorkflow)
+	}
+	dispatch, _ := parsed.On["repository_dispatch"].(map[string]any)
+	if !reflect.DeepEqual(dispatch, map[string]any{"types": []any{workerEnvRepinnedEvent}}) {
+		t.Errorf("%s repository_dispatch = %v, want types: [%s] alone (any other event type must not start a sync)", workerEnvAutosyncWorkflow, parsed.On["repository_dispatch"], workerEnvRepinnedEvent)
 	}
 	schedule, ok := parsed.On["schedule"].([]any)
 	if !ok || len(schedule) != 1 {
@@ -62,6 +78,31 @@ func TestWorkerEnvAutosyncWorkflowTriggersOnScheduleAndDispatchOnly(t *testing.T
 		if _, ok := parsed.On[forbidden]; ok {
 			t.Errorf("%s must never run on %s (forks or an unprivileged push could reach the autofix App token)", workerEnvAutosyncWorkflow, forbidden)
 		}
+	}
+}
+
+// TestWorkerEnvAutosyncWorkflowConcurrency: one run at a time, never
+// cancelled. A dispatch and a cron run can start together, and two runs
+// pushing the same branch would race their leases (the loser fails red);
+// cancelling a run could stop it between its push and its PR step. With
+// cancel-in-progress false a waiting run is replaced only by a newer one,
+// which reads gascity afresh anyway.
+func TestWorkerEnvAutosyncWorkflowConcurrency(t *testing.T) {
+	var parsed struct {
+		Concurrency struct {
+			Group            string `yaml:"group"`
+			CancelInProgress *bool  `yaml:"cancel-in-progress"`
+		} `yaml:"concurrency"`
+	}
+	text := readPolicyFile(t, sourceRepoRoot(t), ".github/workflows/"+workerEnvAutosyncWorkflow)
+	if err := yaml.Unmarshal([]byte(text), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Concurrency.Group != "worker-env-autosync" {
+		t.Errorf("%s concurrency group = %q, want the constant worker-env-autosync (every run, whatever its event, in one queue)", workerEnvAutosyncWorkflow, parsed.Concurrency.Group)
+	}
+	if parsed.Concurrency.CancelInProgress == nil || *parsed.Concurrency.CancelInProgress {
+		t.Errorf("%s concurrency must set cancel-in-progress: false (a run is never cancelled mid-push)", workerEnvAutosyncWorkflow)
 	}
 }
 
@@ -107,9 +148,36 @@ func TestWorkerEnvAutosyncWorkflowPermissionsAreMinimal(t *testing.T) {
 func TestWorkerEnvAutosyncWorkflowShape(t *testing.T) {
 	job := readCIWorkflow(t, workerEnvAutosyncWorkflow).job(t, workerEnvAutosyncJob)
 
+	var names []string
+	for _, step := range job.Steps {
+		names = append(names, step.Name)
+	}
+	wantNames := []string{
+		"", // the checkout
+		workerEnvPickStep,
+		"Compare the worker-env manifest and pin with gascity's main",
+		"Copy gascity main's worker-env manifest and pin",
+		"Confirm only the worker-env files moved",
+		"Mint push token (gastownhall-autofix)",
+		"Mint PR token (gascity-autofix)",
+		"Commit and push the sync branch",
+		"Open or update the sync PR",
+	}
+	if !slices.Equal(names, wantNames) {
+		t.Errorf("%s steps = %q, want %q", workerEnvAutosyncWorkflow, names, wantNames)
+	}
+
+	// The comparison and the copy read the one commit the pick step
+	// resolved (TestWorkerEnvAutosyncPickStep), never main twice.
+	const refEnv = "${{ steps.ref.outputs.ref }}"
+	pick := job.step(t, workerEnvPickStep)
+	wantPickEnv := map[string]string{"EVENT_NAME": "${{ github.event_name }}", "PAYLOAD_SHA": "${{ github.event.client_payload.sha }}"}
+	if pick.ID != "ref" || pick.If != "" || !reflect.DeepEqual(pick.Env, wantPickEnv) || !strings.Contains(pick.Run, rbeWorkerEnvSyncRef+" main") {
+		t.Errorf("pick step: id %q, if %q, env %v; want id ref, no if, env %v, resolving main with %s", pick.ID, pick.If, pick.Env, wantPickEnv, rbeWorkerEnvSyncRef)
+	}
 	sync := job.step(t, "Compare the worker-env manifest and pin with gascity's main")
-	if sync.ID != "sync" || !strings.Contains(sync.Run, "tools/rbe/worker-env-sync main") {
-		t.Errorf("sync step: id %q, run %q; want id sync running tools/rbe/worker-env-sync main", sync.ID, sync.Run)
+	if sync.ID != "sync" || sync.Env["REF"] != refEnv || !strings.Contains(sync.Run, `tools/rbe/worker-env-sync "$REF"`) {
+		t.Errorf("sync step: id %q, env %v, run %q; want id sync running tools/rbe/worker-env-sync \"$REF\" with REF=%s", sync.ID, sync.Env, sync.Run, refEnv)
 	}
 
 	// The PR step stays on the mismatch gate alone, not on the push step's
@@ -133,8 +201,8 @@ func TestWorkerEnvAutosyncWorkflowShape(t *testing.T) {
 	}
 
 	copyStep := job.step(t, "Copy gascity main's worker-env manifest and pin")
-	if !strings.Contains(copyStep.Run, workerEnvSyncCopy+" main") {
-		t.Errorf("copy step run %q, want it to call %s main", copyStep.Run, workerEnvSyncCopy)
+	if copyStep.Env["REF"] != refEnv || !strings.Contains(copyStep.Run, workerEnvSyncCopy+` "$REF"`) {
+		t.Errorf("copy step env %v, run %q, want it to call %s \"$REF\" with REF=%s (the commit the comparison read)", copyStep.Env, copyStep.Run, workerEnvSyncCopy, refEnv)
 	}
 
 	pushMint := job.step(t, "Mint push token (gastownhall-autofix)")
@@ -208,8 +276,68 @@ func TestWorkerEnvAutosyncWorkflowShape(t *testing.T) {
 	if pr.Env["LABEL"] != "status/needs-review-auto" {
 		t.Errorf("PR step env LABEL = %q, want status/needs-review-auto (routes it through the automated review workflow)", pr.Env["LABEL"])
 	}
+	if pr.Env["AUTOMERGE"] != workerEnvAutomergeVar || pr.Env["GASCITY_REF"] != refEnv {
+		t.Errorf("PR step env AUTOMERGE = %q, GASCITY_REF = %q; want %s (the label gate) and %s", pr.Env["AUTOMERGE"], pr.Env["GASCITY_REF"], workerEnvAutomergeVar, refEnv)
+	}
 	if pr.Env["PUSHED"] != "${{ steps.push.outputs.pushed }}" {
 		t.Errorf("PR step env PUSHED = %q, want ${{ steps.push.outputs.pushed }} (an open PR is edited only by a run that pushed)", pr.Env["PUSHED"])
+	}
+}
+
+// TestWorkerEnvAutosyncPickStep runs the pick step's real script against
+// the shared gascity fixture (rbe_worker_env_test.go): a cron or manual run
+// compares with gascity main's head commit; a repository_dispatch compares
+// with the commit its payload names only while that commit is still main's
+// head, and otherwise (a stale, foreign or malformed sha) with main's head,
+// without ever echoing a malformed value into the log, where a newline
+// could start a workflow command; and gascity unreachable leaves ref=main
+// for worker-env-sync to report "unknown", without failing the step.
+func TestWorkerEnvAutosyncPickStep(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skipf("the pick step runs only on worker-env-autosync.yml's ubuntu-latest runner; GOOS=%s", runtime.GOOS)
+	}
+	pick := readCIWorkflow(t, workerEnvAutosyncWorkflow).job(t, workerEnvAutosyncJob).step(t, workerEnvPickStep)
+	f := newRBEWorkerEnvFixture(t)
+	beads := f.beads(t, f.manifest, f.pin)
+	for _, c := range []struct {
+		name, event, payload, gitURL string
+		want                         string
+		wantOut, wantNot             []string
+	}{
+		{name: "cron", event: "schedule", want: f.sha},
+		{name: "manual run", event: "workflow_dispatch", payload: f.staleSHA, want: f.sha},
+		{name: "dispatch naming main's head", event: "repository_dispatch", payload: f.sha, want: f.sha,
+			wantOut: []string{"gascity main is at " + f.sha}},
+		{name: "dispatch naming a commit main has moved past", event: "repository_dispatch", payload: f.staleSHA, want: f.sha,
+			wantOut: []string{"::notice::repository_dispatch named gascity commit " + f.staleSHA + ", which is not gascity main's head (" + f.sha + ")"}},
+		{name: "dispatch with a branch name", event: "repository_dispatch", payload: "main", want: f.sha,
+			wantOut: []string{"::warning::repository_dispatch's client_payload.sha is not a 40-hex commit"}},
+		{name: "dispatch with an injected command", event: "repository_dispatch", payload: f.sha + "\n::error::injected", want: f.sha,
+			wantOut: []string{"::warning::repository_dispatch's client_payload.sha is not a 40-hex commit"}, wantNot: []string{"injected", "::error"}},
+		{name: "gascity unreachable", event: "repository_dispatch", payload: f.sha, gitURL: "file:///nonexistent-gascity", want: "main"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			output := filepath.Join(t.TempDir(), "output")
+			env := []string{"GITHUB_OUTPUT=" + output, "EVENT_NAME=" + c.event, "PAYLOAD_SHA=" + c.payload}
+			if c.gitURL != "" {
+				env = append(env, "WORKER_ENV_SYNC_GIT_URL="+c.gitURL)
+			}
+			code, out := f.run(t, beads, pick.Run, env...)
+			got, _ := os.ReadFile(output)
+			if code != 0 || string(got) != "ref="+c.want+"\n" {
+				t.Errorf("pick step: exit %d, output %q; want exit 0, ref=%s\n%s", code, got, c.want, out)
+			}
+			for _, want := range c.wantOut {
+				if !strings.Contains(out, want) {
+					t.Errorf("pick step log lacks %q:\n%s", want, out)
+				}
+			}
+			for _, not := range c.wantNot {
+				if strings.Contains(out, not) {
+					t.Errorf("pick step log contains %q:\n%s", not, out)
+				}
+			}
+		})
 	}
 }
 
@@ -231,7 +359,10 @@ func TestWorkerEnvAutosyncWorkflowShape(t *testing.T) {
 // warns about an open PR that carries no review-pipeline label (triage
 // labels such as status/needs-triage, which triage-label.yml adds to every
 // new PR, and status/needs-bugflow do not count). A fork PR from a branch
-// of the same name is never taken for the sync PR.
+// of the same name is never taken for the sync PR. With
+// WORKER_ENV_SYNC_AUTOMERGE == 'true' it labels nothing at all (the
+// review pipeline must leave the PR to worker-env-sync-automerge.yml) and
+// warns about no missing label; any other value is today's path.
 func TestWorkerEnvAutosyncPRStepNeverRelabelsAnOpenPR(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skipf("the PR step runs only on worker-env-autosync.yml's ubuntu-latest runner; this file's executed fixtures are Linux-only; GOOS=%s", runtime.GOOS)
@@ -289,7 +420,8 @@ exit 127
 		t.Fatal(err)
 	}
 	const runURL = "https://github.com/gastownhall/beads/actions/runs/1001"
-	run := func(t *testing.T, openJSON, pushed string, listFails bool) (int, string, [][]string) {
+	const gascityRef = "0123456789abcdef0123456789abcdef01234567"
+	run := func(t *testing.T, openJSON, pushed, automerge string, listFails bool) (int, string, [][]string) {
 		t.Helper()
 		state := t.TempDir()
 		if openJSON != "" {
@@ -310,6 +442,8 @@ exit 127
 			"LABEL=" + pr.Env["LABEL"],
 			"RUN_URL=" + runURL,
 			"PUSHED=" + pushed,
+			"AUTOMERGE=" + automerge,
+			"GASCITY_REF=" + gascityRef,
 		}
 		if listFails {
 			cmd.Env = append(cmd.Env, "FAKE_GH_LIST_FAILS=1")
@@ -336,8 +470,10 @@ exit 127
 	}
 
 	// Every call but the lookup, with each --body value checked to cite
-	// this run and then replaced by <body>.
-	writes := func(t *testing.T, calls [][]string) [][]string {
+	// this run and gascity's commit and to say how the PR lands (the guard
+	// with automerge on, else the review label, and never both), then
+	// replaced by <body>.
+	writes := func(t *testing.T, calls [][]string, automerge bool) [][]string {
 		t.Helper()
 		var w [][]string
 		for _, c := range calls {
@@ -346,8 +482,15 @@ exit 127
 			}
 			c = slices.Clone(c)
 			if i := slices.Index(c, "--body"); i >= 0 && i+1 < len(c) {
-				if !strings.Contains(c[i+1], runURL) {
-					t.Errorf("gh %q: --body does not cite this run %s", c[:i], runURL)
+				body := c[i+1]
+				if !strings.Contains(body, runURL) || !strings.Contains(body, "gastownhall/gascity@"+gascityRef) {
+					t.Errorf("gh %q: --body does not cite this run %s and gascity's commit %s:\n%s", c[:i], runURL, gascityRef, body)
+				}
+				if guard, label := strings.Contains(body, "worker-env-sync-automerge.yml"), strings.Contains(body, "`status/needs-review-auto`"); guard != automerge || label == automerge {
+					t.Errorf("gh %q: --body names the guard %v and the review label %v, want guard=%v (automerge %v):\n%s", c[:i], guard, label, automerge, automerge, body)
+				}
+				if strings.Contains(strings.ToLower(body), "armed") {
+					t.Errorf("gh %q: --body says auto-merge is armed, but this step never arms it:\n%s", c[:i], body)
 				}
 				c[i+1] = "<body>"
 			}
@@ -367,12 +510,14 @@ exit 127
 	)
 	create := []string{"pr", "create", "--repo", "gastownhall/beads", "--base", "main", "--head", workerEnvAutosyncBranch,
 		"--title", "build(rbe): sync worker-env pin with gascity main", "--body", "<body>", "--label", "status/needs-review-auto"}
+	// Automerge on: the same PR with no label at all.
+	createUnlabeled := create[:len(create)-2]
 	edit := []string{"pr", "edit", "7746", "--repo", "gastownhall/beads",
 		"--title", "build(rbe): sync worker-env pin with gascity main", "--body", "<body>"}
 	for _, tc := range []struct {
-		name, open, pushed string
-		want               [][]string
-		wantWarning        bool
+		name, open, pushed, automerge string
+		want                          [][]string
+		wantWarning                   bool
 	}{
 		{name: "first run opens the PR already labeled", pushed: "1", want: [][]string{create}},
 		{name: "run that pushed nothing opens a labeled PR for a sync branch that has none", want: [][]string{create}},
@@ -384,9 +529,15 @@ exit 127
 		{name: "open PR carrying only non-review status labels is warned about, never labeled", open: bugflow, wantWarning: true},
 		{name: "fork PR on the same head name is not the sync PR: opens a labeled PR, never edits the fork's", open: fork, pushed: "1", want: [][]string{create}},
 		{name: "fork PR listed ahead of the open sync PR is skipped", open: fork + "," + reviewing, pushed: "1", want: [][]string{edit}},
+		{name: "a variable other than true is the review path", pushed: "1", automerge: "false", want: [][]string{create}},
+		{name: "automerge: first run opens the PR with no label", pushed: "1", automerge: "true", want: [][]string{createUnlabeled}},
+		{name: "automerge: run that pushed nothing opens an unlabeled PR for a sync branch that has none", automerge: "true", want: [][]string{createUnlabeled}},
+		{name: "automerge: pushed run refreshes the open PR, never labels it", open: unlabeled, pushed: "1", automerge: "true", want: [][]string{edit}},
+		{name: "automerge: an open PR with no review label is expected, not warned about", open: unlabeled, automerge: "true"},
+		{name: "automerge: a fork PR on the same head name is not the sync PR", open: fork, pushed: "1", automerge: "true", want: [][]string{createUnlabeled}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			code, out, calls := run(t, tc.open, tc.pushed, false)
+			code, out, calls := run(t, tc.open, tc.pushed, tc.automerge, false)
 			if code != 0 {
 				t.Fatalf("PR step exit %d, want 0\n%s", code, out)
 			}
@@ -398,7 +549,7 @@ exit 127
 					t.Errorf("PR step ran %q; it must never add a label to an existing PR (it would request another review)", c)
 				}
 			}
-			if got := writes(t, calls); !reflect.DeepEqual(got, tc.want) {
+			if got := writes(t, calls, tc.automerge == "true"); !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("PR step gh calls after the lookup = %q, want %q", got, tc.want)
 			}
 			if got := strings.Contains(out, "::warning::"); got != tc.wantWarning {
@@ -411,11 +562,11 @@ exit 127
 	}
 
 	t.Run("a failed PR lookup opens nothing", func(t *testing.T) {
-		code, out, calls := run(t, "", "1", true)
+		code, out, calls := run(t, "", "1", "", true)
 		if code == 0 {
 			t.Errorf("PR step exit 0 after gh pr list failed, want a failure\n%s", out)
 		}
-		if w := writes(t, calls); len(w) != 0 {
+		if w := writes(t, calls, false); len(w) != 0 {
 			t.Errorf("PR step ran %q after a failed lookup, want nothing (it could open a duplicate PR)", w)
 		}
 	})
@@ -461,39 +612,34 @@ func TestWorkerEnvAutosyncWorkflowNeverInterpolatesExpressionsInRun(t *testing.T
 	}
 }
 
-// TestWorkerEnvAutosyncWorkflowNeverArmsAutoMerge: the sync PR lands the
-// way any other PR does. Its status/needs-review-auto label hands it to the
-// automated review workflow, and the merge workflow queues it once that
-// review passes, so no step merges it or arms auto-merge, and its body
-// names the label rather than promising an auto-merge nothing arms.
-// Arming cannot work here: GitHub's enablePullRequestAutoMerge wants
-// contents:write as well as pull-requests:write on one token (pr-token
-// alone failed with "Resource not accessible by integration" on the run
-// that opened #7746), the push-plus-PR token the two-token split rules
-// out. Nor should it: main requires only the CI and PR Risk gates
-// (engdocs/CI_REQUIRED_CHECK_TOPOLOGY.md), so an armed PR would join the
-// merge queue without the review.
-func TestWorkerEnvAutosyncWorkflowNeverArmsAutoMerge(t *testing.T) {
+// TestWorkerEnvAutosyncWorkflowLeavesMergingToTheGuard: nothing in this
+// workflow merges the sync PR, arms auto-merge or queues it, and nothing
+// could: pr-token is pull-requests:write alone, and GitHub's
+// enablePullRequestAutoMerge wants contents:write on the same token
+// (#7746's run failed with "Resource not accessible by integration"), the
+// push-plus-PR token the two-token split here rules out. With
+// WORKER_ENV_SYNC_AUTOMERGE == 'true' the arming is
+// worker-env-sync-automerge.yml's, after it has verified the PR, with a
+// token of its own; otherwise the review label lands it
+// (TestWorkerEnvAutosyncPRStepNeverRelabelsAnOpenPR checks the body says
+// which).
+func TestWorkerEnvAutosyncWorkflowLeavesMergingToTheGuard(t *testing.T) {
 	job := readCIWorkflow(t, workerEnvAutosyncWorkflow).job(t, workerEnvAutosyncJob)
 	for _, step := range job.Steps {
 		for _, merge := range []string{"gh pr merge", "enablePullRequestAutoMerge", "enqueuePullRequest"} {
 			if strings.Contains(step.Run, merge) {
-				t.Errorf("step %q runs %s; the sync PR lands through its status/needs-review-auto label, never auto-merge or a direct merge", step.Name, merge)
+				t.Errorf("step %q runs %s; arming is worker-env-sync-automerge.yml's, after verification", step.Name, merge)
 			}
 		}
 	}
-
-	pr := job.step(t, "Open or update the sync PR")
-	start, end := strings.Index(pr.Run, "<<BODY\n"), strings.Index(pr.Run, "\nBODY\n")
-	if start < 0 || end < start {
-		t.Fatalf("PR step run %q, want the PR body in a <<BODY heredoc", pr.Run)
-	}
-	body := pr.Run[start+len("<<BODY\n") : end]
-	if strings.Contains(strings.ToLower(body), "armed") {
-		t.Errorf("PR body says auto-merge is armed, but nothing arms it:\n%s", body)
-	}
-	if !strings.Contains(body, "$LABEL") {
-		t.Errorf("PR body does not name $LABEL, the label that lands it:\n%s", body)
+	// The variable is read where the label is decided, and nowhere else
+	// here.
+	for _, step := range job.Steps {
+		for k, v := range step.Env {
+			if strings.Contains(v, "WORKER_ENV_SYNC_AUTOMERGE") && (step.Name != "Open or update the sync PR" || k != "AUTOMERGE") {
+				t.Errorf("step %q env %s reads WORKER_ENV_SYNC_AUTOMERGE; only the PR step's AUTOMERGE may", step.Name, k)
+			}
+		}
 	}
 }
 

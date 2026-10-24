@@ -1,0 +1,311 @@
+# Land the worker-env pin-sync PR without a review, as soon as its CI is
+# green.
+#
+# When gascity re-pins the rbe-west worker env, every beads PR's "Bazel /
+# execution mode" preflight fails until beads' copy catches up, and
+# worker-env-autosync.yml opens that copy as a PR from bot/worker-env-sync.
+# On Oct 21 the copy (#7746) landed 89 minutes after gascity#8165, most of
+# it a full automated review of a two-line, machine-made change. With
+# repository variable WORKER_ENV_SYNC_AUTOMERGE set to 'true', the autosync
+# opens the PR with no review label and this workflow verifies it
+# deterministically and arms auto-merge, so the merge queue lands it the
+# moment its required checks pass.
+#
+# VERIFY (job verify; read-only token; no secrets, no environment):
+# tools/rbe/worker-env-sync-verify, from the run's base commit, reads the PR
+# from the API as data -- it never checks out, builds or runs PR code -- and
+# passes it only if it was opened by gascity-autofix[bot] from this
+# repository's bot/worker-env-sync into main, is not a draft, was (on a
+# synchronize) pushed by gastownhall-autofix[bot], has every commit authored
+# and committed by gastownhall-autofix[bot] and the branch's newest push
+# (repository activity API) by it at the head commit, changes exactly
+# platforms/BUILD.bazel and tools/rbe/worker-env.txt, differs from main's
+# BUILD file in the pin line alone, pins the sha256 of its manifest, and
+# both files are gascity main's (the trusted worker-env-sync, main resolved
+# to a commit). What it cannot decide (GitHub or gascity unreachable) is
+# "unknown", which never arms.
+#
+# ACT (job act; environment autofix): only when verify asks for a write.
+# The gascity-autofix App's merge token (contents, pull-requests and
+# merge-queues write: GitHub's enablePullRequestAutoMerge wants contents and
+# pull-requests write on one token, and the merge queue its own permission)
+# arms or disarms; it cannot be the GITHUB_TOKEN, whose queued PR would
+# never start its merge_group runs. The same App's PR token
+# (pull-requests write alone) comments and labels. Each mint step is the
+# only step that sees the key; after it only gh runs. Arming is gh pr merge
+# --auto --squash bound to the verified head (--match-head-commit), so a
+# later push is never armed unverified. A PR that fails verification, or
+# cannot be verified, is taken out of the merge queue and auto-merge; a
+# refusal is commented once per head commit, with the reasons. If the
+# merge token cannot be minted, or arming is refused for lack of permission
+# (the App not yet granted contents and merge-queues write), the PR is
+# labeled status/needs-review-auto -- once, and only if it carries no
+# review-pipeline label (see worker-env-autosync.yml's PR step) -- so it
+# still lands, through the review.
+#
+# RERUN (job rerun; actions: write; schedule and dispatch only): a re-pin
+# moves every action key, so the sync PR's first CI run is uncached; #7746's
+# release cross-compile took 50 minutes, and #7411's and #7732's first
+# attempts hit its 90-minute timeout. A red first attempt would strand an
+# armed PR, so when the verified PR's newest PR or PR Risk run of its head
+# failed, was cancelled or timed out, its failed jobs are re-run once:
+# never when any run of that head has run_attempt > 1.
+#
+# TRIGGERS: pull_request_target (opened, reopened, synchronize,
+# ready_for_review) for the fast path; every 15 minutes and on dispatch to
+# re-check an open sync PR after a missed event or a merge-queue ejection.
+# pull_request_target runs this file and its scripts from main, never the
+# PR's, and here: verify's if: lets only this repository's
+# bot/worker-env-sync through, before anything else; no run: interpolates
+# ${{ }} (event data reaches scripts through env); every job holds the
+# narrowest token permissions; nothing downloads an artifact; the only
+# checkout is the run's base commit (github.sha), without persisted
+# credentials.
+#
+# GATE AND ROLLBACK: unset WORKER_ENV_SYNC_AUTOMERGE and no job runs here,
+# and the autosync labels the PR for review again. An already-armed PR
+# stays armed: gh pr merge <n> --disable-auto. Setup (the App's
+# permissions, the variable) is in engdocs/CI_REQUIRED_CHECK_TOPOLOGY.md,
+# "rbe worker-env Pin Sync".
+name: rbe worker-env sync automerge
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+    branches: [main]
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+# Every run about the sync PR (its events, the schedule, a dispatch) waits
+# in one group and none is cancelled, so each verdict is acted on before the
+# next verification starts. Any other PR's run (skipped at verify's if:)
+# gets a group of its own and can never displace a waiting sync-PR run.
+concurrency:
+  group: >-
+    worker-env-sync-automerge-${{ github.event_name == 'pull_request_target' &&
+    (github.event.pull_request.head.ref != 'bot/worker-env-sync' ||
+    github.event.pull_request.head.repo.full_name != github.repository) &&
+    github.event.pull_request.number || 'sync-pr' }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify the sync PR
+    # The head-branch and same-repository filters first (the verifier
+    # re-checks both from the API), then the fork guard and the variable.
+    if: >-
+      (github.event_name != 'pull_request_target' ||
+      (github.event.pull_request.head.ref == 'bot/worker-env-sync' &&
+      github.event.pull_request.head.repo.full_name == github.repository)) &&
+      github.repository == 'gastownhall/beads' &&
+      vars.WORKER_ENV_SYNC_AUTOMERGE == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      pr: ${{ steps.verify.outputs.pr }}
+      head-sha: ${{ steps.verify.outputs.head-sha }}
+      node-id: ${{ steps.verify.outputs.node-id }}
+      verdict: ${{ steps.verify.outputs.verdict }}
+      armed: ${{ steps.verify.outputs.armed }}
+      queued: ${{ steps.verify.outputs.queued }}
+      arm: ${{ steps.verify.outputs.arm }}
+      disarm: ${{ steps.verify.outputs.disarm }}
+      comment: ${{ steps.verify.outputs.comment }}
+      fallback-label: ${{ steps.verify.outputs.fallback-label }}
+      rerun: ${{ steps.verify.outputs.rerun }}
+      reason: ${{ steps.verify.outputs.reason }}
+    steps:
+      # The run's base commit (pull_request_target's github.sha is main's
+      # head), never the PR's: the verifier and worker-env-sync come from
+      # here, and the PR's two files reach them through the API as data.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            tools/rbe
+
+      # A verdict never fails the step: refused (1) and unknown (2) are
+      # outcomes the outputs carry to act. Above 2 the script itself
+      # failed, which must not pass for a verdict.
+      - name: Verify the sync PR
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          EVENT_SENDER: ${{ github.event.sender.login }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          rc=0
+          tools/rbe/worker-env-sync-verify "$PR" || rc=$?
+          if [ "$rc" -gt 2 ]; then
+            exit "$rc"
+          fi
+
+  act:
+    name: Arm or disarm auto-merge
+    needs: verify
+    if: needs.verify.outputs.arm == 'true' || needs.verify.outputs.disarm == 'true' || needs.verify.outputs.comment == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The gascity-autofix App's id and private key. The environment's
+    # deployment-branch policy (main) holds for every event here: a
+    # pull_request_target run's ref is the default branch.
+    environment: autofix
+    permissions: {}
+    steps:
+      # Its failure is the fallback's signal (the App not granted these
+      # permissions yet), hence continue-on-error; a disarm without it
+      # fails below.
+      - name: Mint merge token (gascity-autofix)
+        id: merge-token
+        if: needs.verify.outputs.arm == 'true' || needs.verify.outputs.disarm == 'true'
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.GASCITY_AUTOFIX_APP_ID }}
+          private-key: ${{ secrets.GASCITY_AUTOFIX_APP_PRIVATE_KEY }}
+          owner: gastownhall
+          repositories: beads
+          permission-contents: write
+          permission-pull-requests: write
+          permission-merge-queues: write
+
+      # gh pr merge --disable-auto leaves a queued PR where it is, so a
+      # queued one is dequeued first (dequeuePullRequest).
+      - name: Take the sync PR out of auto-merge and the merge queue
+        if: needs.verify.outputs.disarm == 'true'
+        env:
+          GH_TOKEN: ${{ steps.merge-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ needs.verify.outputs.pr }}
+          NODE_ID: ${{ needs.verify.outputs.node-id }}
+          ARMED: ${{ needs.verify.outputs.armed }}
+          QUEUED: ${{ needs.verify.outputs.queued }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::no merge token, so #$PR is still armed or queued; take it out by hand (gh pr merge $PR --disable-auto, or Remove from queue)."
+            exit 1
+          fi
+          if [ "$QUEUED" = true ]; then
+            gh api graphql -f query='mutation($id: ID!) { dequeuePullRequest(input: {id: $id}) { clientMutationId } }' -f id="$NODE_ID"
+          fi
+          if [ "$ARMED" = true ]; then
+            gh pr merge "$PR" --repo "$REPO" --disable-auto
+          fi
+
+      # On a merge-queue branch this arms auto-merge (the PR joins the
+      # queue once its required checks pass) or, already green, queues it.
+      # --match-head-commit binds it to the commit verify checked: GitHub
+      # refuses it for any other head. A refusal for lack of permission is
+      # the fallback's signal (denied=1), not a failure; any other failure
+      # fails the job and labels nothing.
+      - name: Arm auto-merge
+        id: arm
+        if: needs.verify.outputs.arm == 'true' && steps.merge-token.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ steps.merge-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ needs.verify.outputs.pr }}
+          HEAD_SHA: ${{ needs.verify.outputs.head-sha }}
+        run: |
+          if out="$(gh pr merge "$PR" --repo "$REPO" --auto --squash --match-head-commit "$HEAD_SHA" 2>&1)"; then
+            printf '%s\n' "$out"
+            exit 0
+          fi
+          printf '%s\n' "$out"
+          case "$out" in
+          *"Resource not accessible by integration"* | *"HTTP 403"*)
+            echo "::warning::arming auto-merge on #$PR was refused for lack of permission; the gascity-autofix App needs contents, pull requests and merge queues write (engdocs/CI_REQUIRED_CHECK_TOPOLOGY.md, rbe worker-env Pin Sync)."
+            echo "denied=1" >> "$GITHUB_OUTPUT"
+            ;;
+          *) exit 1 ;;
+          esac
+
+      - name: Mint PR token (gascity-autofix)
+        id: pr-token
+        if: needs.verify.outputs.comment == 'true' || (needs.verify.outputs.arm == 'true' && needs.verify.outputs.fallback-label == 'true' && (steps.merge-token.outcome == 'failure' || steps.arm.outputs.denied == '1'))
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.GASCITY_AUTOFIX_APP_ID }}
+          private-key: ${{ secrets.GASCITY_AUTOFIX_APP_PRIVATE_KEY }}
+          owner: gastownhall
+          repositories: beads
+          permission-pull-requests: write
+
+      # One comment per refused head commit: verify reads the marker back.
+      # The reasons go in a code block, so nothing taken from the PR
+      # renders as markdown.
+      - name: Comment the refusal on the sync PR
+        if: needs.verify.outputs.comment == 'true'
+        env:
+          GH_TOKEN: ${{ steps.pr-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ needs.verify.outputs.pr }}
+          HEAD_SHA: ${{ needs.verify.outputs.head-sha }}
+          REASON: ${{ needs.verify.outputs.reason }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          body="$(cat <<BODY
+          <!-- worker-env-sync-automerge refused $HEAD_SHA -->
+          worker-env-sync-automerge did not arm auto-merge for this PR at $HEAD_SHA ($RUN_URL):
+
+          \`\`\`text
+          $REASON
+          \`\`\`
+
+          It arms only what worker-env-autosync pushes: a PR opened by gascity-autofix[bot] from this repository's bot/worker-env-sync into main, whose every commit and newest push are gastownhall-autofix[bot]'s, changing only the worker-env manifest and its pin, both equal to gascity main's. Close the PR (the autosync opens a fresh one if beads is still out of step), or label it \`status/needs-review-auto\` to land it through the review.
+          BODY
+          )"
+          gh pr comment "$PR" --repo "$REPO" --body "$body"
+
+      # The fallback: verify decided the PR may get it (no review-pipeline
+      # label, never labeled for review before); it runs only when the
+      # merge token could not be minted or arming was refused for lack of
+      # permission.
+      - name: Label the sync PR for review instead
+        if: needs.verify.outputs.arm == 'true' && needs.verify.outputs.fallback-label == 'true' && (steps.merge-token.outcome == 'failure' || steps.arm.outputs.denied == '1')
+        env:
+          GH_TOKEN: ${{ steps.pr-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ needs.verify.outputs.pr }}
+          LABEL: status/needs-review-auto
+        run: gh pr edit "$PR" --repo "$REPO" --add-label "$LABEL"
+
+  rerun:
+    name: Re-run the sync PR's failed first CI attempt
+    needs: verify
+    if: needs.verify.outputs.rerun != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      # Run ids only (verify names them); nothing is re-run unless every
+      # word is one.
+      - name: Re-run failed jobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUNS: ${{ needs.verify.outputs.rerun }}
+        run: |
+          for run in $RUNS; do
+            case "$run" in
+            *[!0-9]*)
+              echo "::error::verify named something other than workflow run ids; nothing re-run."
+              exit 1
+              ;;
+            esac
+          done
+          for run in $RUNS; do
+            gh run rerun "$run" --failed --repo "$REPO"
+          done
