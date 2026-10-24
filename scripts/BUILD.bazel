@@ -50,6 +50,7 @@ go_test(
         "ci_blacksmith_runner_test.go",
         "ci_f7b_review_test.go",
         "ci_f7c_advisory_test.go",
+        "ci_merge_group_scope_test.go",
         "ci_merge_queue_test.go",
         "ci_workflow_apt_get_timeout_test.go",
         "ci_workflow_core_test.go",

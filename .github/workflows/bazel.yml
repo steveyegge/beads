@@ -10,6 +10,15 @@
 # so pr.yml's ci-gate requires the lanes to have run remotely on rbe-west
 # and passed on every pull_request and merge group (BAZEL_REMOTE): modes
 # skip, local and cache are red there (scripts/pr_risk_bazel_coverage_test.go).
+# A merge group runs every lane but the Dolt tiers: pr.yml's scope passes
+# dolt-tiers "off" there, which skips bazel-embedded, bazel-dolt-race and
+# bazel-dolt-int (and their members outside mode remote), and the call
+# reports it back (the dolt-tiers output) so pr.yml's gate excuses those
+# lanes only then. This file's own push run on main runs every lane (no
+# input there), so every lane runs on every tree the merge queue lands on
+# main: the fast set in its merge group, the Dolt tiers in that push run
+# (engdocs/CI_REQUIRED_CHECK_TOPOLOGY.md, "Merge Queue";
+# scripts/ci_merge_group_scope_test.go).
 # Where a lane executes remotely its `bazel test`s add --config=sole-run: it
 # is the tier's only run, so a remote cache eviction fails it rather than
 # re-running the invocation (whose retry could turn a failed test green).
@@ -292,6 +301,20 @@ on:
         type: string
         required: false
         default: "off"
+      # "off" (pr.yml on a merge group, from its scope job) skips the
+      # Dolt-tier lanes in every mode: bazel-embedded, bazel-dolt-race and
+      # bazel-dolt-int, and outside mode remote bazel-doltserver,
+      # bazel-proxied, bazel-server-storage and bazel-cmd-dolt. Anything
+      # else runs them: a string, so push and dispatch (null) and every
+      # other caller (the default) keep every lane. The dolt-tiers output
+      # reports which.
+      dolt-tiers:
+        description: >
+          "off" (pr.yml on a merge group) skips the Dolt-tier lanes; anything
+          else runs them.
+        type: string
+        required: false
+        default: "on"
     # Only what the rbe job and setup-bazel need; callers pass them
     # explicitly. None is required: fork and Dependabot runs have none.
     secrets:
@@ -324,10 +347,14 @@ on:
       # engdocs/CI_REQUIRED_CHECK_TOPOLOGY.md, "rbe-west Pre-warm".
       RBE_POOL_APP_PRIVATE_KEY:
         required: false
-    # The rbe job's decision, and each lane's job.status (success, failure or
-    # cancelled; empty when the lane was skipped or never reported). pr.yml's
-    # ci-gate reads them through .github/scripts/bazel-gate.sh.
+    # The rbe job's decision, what the call ran (dolt-tiers), and each
+    # lane's job.status (success, failure or cancelled; empty when the lane
+    # was skipped or never reported). pr.yml's ci-gate reads them through
+    # .github/scripts/bazel-gate.sh.
     outputs:
+      dolt-tiers:
+        description: "'off' when this call skipped the Dolt-tier lanes (its dolt-tiers input was off), else 'on'"
+        value: ${{ inputs.dolt-tiers == 'off' && 'off' || 'on' }}
       rbe-enabled:
         description: "'true' when the lanes executed remotely on rbe-west, else 'false'"
         value: ${{ jobs.rbe.outputs.enabled }}
@@ -380,12 +407,15 @@ on:
         description: "rbe-prewarm's job.status (advisory: continue-on-error, never gates or blocks a lane)"
         value: ${{ jobs.rbe-prewarm.outputs.result }}
 
-# Main runs always finish (they may save the runner cache); PR runs (called
-# from pr.yml or bazel-farm.yml, whose own groups cancel the calling run too)
-# supersede. The group differs from each caller's, as a called workflow's
-# must.
+# Main runs always finish (they may save the runner cache) and each push to
+# main gets its own group (its commit): the push run is the Dolt tiers' first
+# run on that tree (a merge group skips them), so a later push must neither
+# cancel it nor displace it while it waits (GitHub cancels a group's pending
+# run when a newer one queues). PR runs (called from pr.yml or
+# bazel-farm.yml, whose own groups cancel the calling run too) supersede.
+# The group differs from each caller's, as a called workflow's must.
 concurrency:
-  group: bazel-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  group: bazel-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.sha) || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
 
 permissions:
@@ -1401,7 +1431,7 @@ jobs:
     # GitHub-hosted in the fork modes (a client only).
     needs: rbe
     runs-on: ${{ needs.rbe.outputs.mode == 'remote' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
-    if: ${{ needs.rbe.outputs.enabled == 'true' }}
+    if: ${{ needs.rbe.outputs.enabled == 'true' && inputs.dolt-tiers != 'off' }}
     timeout-minutes: 60
     outputs:
       result: ${{ steps.result.outputs.result }}
@@ -1785,7 +1815,7 @@ jobs:
     # (bazel-dolt-race's).
     needs: rbe
     runs-on: ${{ needs.rbe.outputs.mode == 'remote' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-24.04' }}
-    if: ${{ needs.rbe.outputs.mode != 'skip' && needs.rbe.outputs.mode != 'remote' }}
+    if: ${{ needs.rbe.outputs.mode != 'skip' && needs.rbe.outputs.mode != 'remote' && inputs.dolt-tiers != 'off' }}
     timeout-minutes: 90
     outputs:
       result: ${{ steps.result.outputs.result }}
@@ -1927,7 +1957,7 @@ jobs:
     # retired) and pr.yml's gate requires it to have run here and passed.
     needs: rbe
     runs-on: ${{ needs.rbe.outputs.mode == 'remote' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
-    if: ${{ needs.rbe.outputs.enabled == 'true' && needs.rbe.outputs.mode != 'remote' }}
+    if: ${{ needs.rbe.outputs.enabled == 'true' && needs.rbe.outputs.mode != 'remote' && inputs.dolt-tiers != 'off' }}
     timeout-minutes: 30
     outputs:
       result: ${{ steps.result.outputs.result }}
@@ -2083,18 +2113,20 @@ jobs:
   # verified), so cached results carry over both ways, and a revert of the
   # cutover re-executes nothing. Gated: its job.status is both the
   # bazel-doltserver and the bazel-proxied workflow_call output (a failure
-  # in either tier fails both ids, which are both required). Every step has
-  # a timeout and the job's exceeds their sum by 5 minutes while staying
-  # under the merge queue's 60-minute check timeout
-  # (TestBazelDoltRaceJobTimeouts), so a hang fails a named step instead of
-  # dropping the merge group. The member jobs' configs and the union's must
-  # stay key-identical: the mode decides which runs (TestBazelDoltRaceConfigIsMemberUnion).
+  # in either tier fails both ids, which are both required). A merge group
+  # skips it (dolt-tiers off; main's push run runs it). Every step has a
+  # timeout and the job's exceeds their sum by 5 minutes while staying under
+  # the merge queue's 60-minute check timeout (TestBazelDoltRaceJobTimeouts),
+  # so a hang fails a named step instead of dropping the merge group, should
+  # a merge group run it again (rollback). The member jobs' configs and the
+  # union's must stay key-identical: the mode decides which runs
+  # (TestBazelDoltRaceConfigIsMemberUnion).
   # Its ci-analytics LANE is dolt-race.
   bazel-dolt-race:
     name: dolt-race
     needs: rbe
     runs-on: ${{ needs.rbe.outputs.mode == 'remote' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
-    if: ${{ needs.rbe.outputs.mode == 'remote' }}
+    if: ${{ needs.rbe.outputs.mode == 'remote' && inputs.dolt-tiers != 'off' }}
     # At least every step's timeout-minutes plus 5, and below the merge
     # queue's 60-minute check timeout so this job alone cannot exhaust it
     # (TestBazelDoltRaceJobTimeouts). Not a whole-run bound: the rbe job runs
@@ -2272,7 +2304,7 @@ jobs:
     # retired) and pr.yml's gate requires it to have run here and passed.
     needs: rbe
     runs-on: ${{ needs.rbe.outputs.mode == 'remote' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
-    if: ${{ needs.rbe.outputs.enabled == 'true' && needs.rbe.outputs.mode != 'remote' && inputs.integration != 'off' }}
+    if: ${{ needs.rbe.outputs.enabled == 'true' && needs.rbe.outputs.mode != 'remote' && inputs.integration != 'off' && inputs.dolt-tiers != 'off' }}
     timeout-minutes: 30
     outputs:
       result: ${{ steps.result.outputs.result }}
@@ -2447,7 +2479,7 @@ jobs:
     # comment above.
     needs: rbe
     runs-on: ${{ needs.rbe.outputs.mode == 'remote' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-24.04' }}
-    if: ${{ (needs.rbe.outputs.enabled == 'true' || needs.rbe.outputs.mode == 'cache') && inputs.integration != 'off' && needs.rbe.outputs.mode != 'remote' }}
+    if: ${{ (needs.rbe.outputs.enabled == 'true' || needs.rbe.outputs.mode == 'cache') && inputs.integration != 'off' && needs.rbe.outputs.mode != 'remote' && inputs.dolt-tiers != 'off' }}
     timeout-minutes: 85
     continue-on-error: true
     outputs:
@@ -2618,6 +2650,8 @@ jobs:
   # dies before the classify step leaves both outputs empty, which mode
   # remote's gate (bazel-gate.sh, ci-gate.sh) already treats as skipped and
   # fails, same as an empty bazel-server-storage/bazel-cmd-dolt result would.
+  # A merge group skips it (dolt-tiers off; main's push run runs it); the
+  # timeouts below keep a rollback of that safe.
   # Every step has a timeout and the job's exceeds their sum by 5 minutes
   # while staying under the merge queue's 60-minute check timeout
   # (TestBazelDoltIntJobTimeouts): 58 leaves only about 2 minutes for runner
@@ -2632,7 +2666,7 @@ jobs:
     name: dolt-int
     needs: rbe
     runs-on: ${{ needs.rbe.outputs.mode == 'remote' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
-    if: ${{ needs.rbe.outputs.mode == 'remote' && inputs.integration != 'off' }}
+    if: ${{ needs.rbe.outputs.mode == 'remote' && inputs.integration != 'off' && inputs.dolt-tiers != 'off' }}
     # At least every step's timeout-minutes plus 5, and below the merge
     # queue's 60-minute check timeout so this job alone cannot exhaust it
     # (TestBazelDoltIntJobTimeouts). 58 leaves only about 2 minutes for
