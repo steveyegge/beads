@@ -226,9 +226,10 @@ func bazelUnionEffectiveJobs(t *testing.T, rc, unionConfig string) int {
 // Every flag stays a member's own, so each member target's test action is
 // unchanged: `bazel aquery 'mnemonic("TestRunner", ...)'` over each member's
 // targets gives byte-identical actions (key, argv, env, outputs) under the
-// member config and under the union, 27 + 35 = 62 (item 5 A1b). Both arms
-// run, the mode deciding which, so drift between them would split results
-// by mode: a flag added to a member must be added to the union too.
+// member config and under the union (item 5 A1b, 62 actions then; today's
+// count is bazelDoltRaceTestActions). Both arms run, the mode deciding
+// which, so drift between them would split results by mode: a flag added to
+// a member must be added to the union too.
 func TestBazelDoltRaceConfigIsMemberUnion(t *testing.T) {
 	rc := readPolicyFile(t, bazelPolicyRoot(t), ".bazelrc")
 	const tagPrefix = "test --test_tag_filters="
@@ -502,9 +503,11 @@ func TestBazelDoltRaceArmsExactlyOnePerMode(t *testing.T) {
 	}
 }
 
-// bazelDoltRaceTestActions: the union's test actions, 27 dolt-server + 35
-// proxied-server (aquery, item 5 A1b), each a target's shard.
-const bazelDoltRaceTestActions = 62
+// bazelDoltRaceTestActions: the union's test actions, 27 dolt-server + 37
+// proxied-server, each a target's shard (62 when item 5 A1b aquery-verified
+// them; bd_managed_local_test has run as 3 shards, not 1, since: 4 would
+// leave no room under --jobs=64).
+const bazelDoltRaceTestActions = 64
 
 // TestBazelDoltRaceFitsTheJobsBudget pins the one-wave rule (closed PR
 // #7542): a union's total test actions must fit in the effective --jobs so

@@ -166,7 +166,11 @@ Lane targets that are `sh_test`s run the test binary through a wrapper or
 shard script, which can pass its own `-test.run` and so override
 `--test_filter`. Select the test with a trailing
 `--test_arg='-test.run=^TestExactName$'` instead (the last one wins), with
-`--test_sharding_strategy=disabled` so that it runs once.
+`--test_sharding_strategy=disabled` so that it runs once. The exception is
+`//cmd/bd:bd_managed_local_test`: `cmd/bd/managed_local_shards.txt` is its
+whole selection, and its wrapper (`tools/bazel/go_test_offline.sh
+--shard-manifest`) refuses a `-test.run`; narrow it with
+`--test_arg='-test.skip=...'`.
 
 A test can need more than one of these (a `-short`-gated Dolt test needs the
 Dolt flags and `--test_arg=-test.short=false`); combine them and check the

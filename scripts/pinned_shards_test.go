@@ -11,12 +11,14 @@ import (
 )
 
 // fakeTestBinary writes a stand-in for a go_test binary that prints its
-// arguments and the sharding environment it was started with.
+// arguments, the sharding environment it was started with, and whether it
+// runs inside fakeOfflineTools' stand-in namespace.
 func fakeTestBinary(t *testing.T, dir string) {
 	t.Helper()
 	script := `#!/usr/bin/env bash
 echo "args=$*"
 echo "total=${TEST_TOTAL_SHARDS-unset} index=${TEST_SHARD_INDEX-unset} status=${TEST_SHARD_STATUS_FILE-unset} fromBazel=${GO_TEST_RUN_FROM_BAZEL-unset}"
+echo "netns=${FAKE_NETNS-unset}"
 `
 	if err := os.WriteFile(filepath.Join(dir, "bin"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -270,7 +272,18 @@ func pinnedShardWrapperUsers(t *testing.T, root string) []string {
 	for _, tgt := range pinnedShardTargets {
 		allowed[tgt.build+":"+tgt.rule] = tgt.tag
 	}
-	const label = "//tools/bazel:go_test_pinned_shard.sh"
+	return shWrapperUsers(t, root, pinnedShardWrapper, allowed, "pinnedShardTargets")
+}
+
+// shWrapperUsers returns an error for every BUILD rule that runs through the
+// tools/bazel script wrapper (an sh_test src) other than allowed (BUILD
+// file:rule -> the one lane tag it must carry), for any allowed rule not
+// tagged exactly that, and if not every allowed rule was found. table names
+// the Go table a newly reviewed rule is added to.
+func shWrapperUsers(t *testing.T, root, wrapper string, allowed map[string]string, table string) []string {
+	t.Helper()
+	base := filepath.Base(wrapper)
+	label := "//tools/bazel:" + base
 	var errs []string
 	seen := 0
 	for _, f := range repoFiles(t, root, 300) {
@@ -278,11 +291,11 @@ func pinnedShardWrapperUsers(t *testing.T, root string) []string {
 			continue
 		}
 		build := readPolicyFile(t, root, f)
-		if !strings.Contains(build, "go_test_pinned_shard.sh") {
+		if !strings.Contains(build, base) {
 			continue
 		}
 		for _, rule := range bazelTopRules(stripStarlarkComments(build)) {
-			if !strings.Contains(rule, "go_test_pinned_shard.sh") {
+			if !strings.Contains(rule, base) {
 				continue
 			}
 			name := ""
@@ -293,22 +306,22 @@ func pinnedShardWrapperUsers(t *testing.T, root string) []string {
 				if f == "tools/bazel/BUILD.bazel" && strings.HasPrefix(rule, "exports_files(") {
 					continue
 				}
-				errs = append(errs, f+": rule "+name+" references go_test_pinned_shard.sh other than as its sh_test src "+label)
+				errs = append(errs, f+": rule "+name+" references "+base+" other than as its sh_test src "+label)
 				continue
 			}
 			seen++
 			tag, ok := allowed[f+":"+name]
 			if !ok {
-				errs = append(errs, f+": "+name+" runs through "+pinnedShardWrapper+"; add it to pinnedShardTargets after reviewing that every test still runs exactly once")
+				errs = append(errs, f+": "+name+" runs through "+wrapper+"; add it to "+table+" after reviewing that every test still runs exactly once")
 				continue
 			}
 			if !strings.Contains(rule, `tags = ["`+tag+`"]`) {
-				errs = append(errs, f+": "+name+" runs through "+pinnedShardWrapper+" but is not tagged exactly "+tag)
+				errs = append(errs, f+": "+name+" runs through "+wrapper+" but is not tagged exactly "+tag)
 			}
 		}
 	}
-	if seen != len(pinnedShardTargets) {
-		errs = append(errs, fmt.Sprintf("found %d rules running through %s, want the %d pinnedShardTargets", seen, pinnedShardWrapper, len(pinnedShardTargets)))
+	if seen != len(allowed) {
+		errs = append(errs, fmt.Sprintf("found %d rules running through %s, want the %d %s", seen, wrapper, len(allowed), table))
 	}
 	return errs
 }

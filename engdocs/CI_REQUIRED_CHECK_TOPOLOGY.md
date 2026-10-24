@@ -634,10 +634,13 @@ In mode `remote`, `bazel.yml`'s `bazel-dolt-race` job (check name
 (`dolt-server lane`) and `bazel-proxied` (`proxied-server tier`) jobs.
 `--config=dolt-race` is exactly the union of `--config=doltserver` and
 `--config=doltserver-proxied`, with one tag filter for both tiers, so every
-member target's test action is unchanged (`bazel aquery`: the 27 + 35 = 62
-`TestRunner` actions are byte-identical under the member configs and the
-union). One client waits on rbe-west for both tiers at once, so the job ends
-with the slower tier and the other tier's runner is saved.
+member target's test action is unchanged (`bazel aquery` at the cutover: the
+27 + 35 = 62 `TestRunner` actions were byte-identical under the member
+configs and the union; there are 27 + 37 = 64 since
+`//cmd/bd:bd_managed_local_test` runs as 3 shards, and all must fit the
+union's `--jobs=64` at once, `scripts/bazel_dolt_race_test.go`). One client
+waits on rbe-west for both tiers at once, so the job ends with the slower
+tier and the other tier's runner is saved.
 
 - Mode `remote` only (same-repo pull requests, merge groups, push, nightly,
   dispatch and `bazel-farm.yml`'s authorized call). In the fork modes
