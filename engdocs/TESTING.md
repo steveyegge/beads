@@ -345,6 +345,16 @@ integration-build test runs once (push, nightly and bazel-farm runs keep
 `bd_test` in the integration lane). Locally:
 `bazel test //cmd/bd:bd_dolt_server_test --config=doltserver-cmd`.
 
+A pinned-shard manifest written with `pin_shards.py --record-measured`
+(`backend/http/served_pinned_shards.txt`) also lists every other test it
+measured, as `rr <TestName>`, so `//scripts:go_test_sources_test` can tell
+the tests added since: they all land in the round-robin shards, and once
+there are more than 2 per round-robin shard the test fails and prints the
+regeneration command (for `http_served_test`, one `pin_shards.py` run over
+the CI test.xml `tools/bazel/fetch_served_testxml.sh` downloads). Every
+pinned-shard target but `corpus_served_test` keeps at least 3 round-robin
+shards.
+
 An ambient `BEADS_DOLT_SERVER_PORT` or `BEADS_DOLT_PORT` is never honored by
 the suites that call `testutil.EnsureDoltContainerForTestMain`. When a test
 container is started, that container's port overwrites both variables; when one
