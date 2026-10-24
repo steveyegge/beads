@@ -669,8 +669,11 @@ fi
 			t.Errorf("%s: exit %d, want 1 with today's output plus one line %q...%q; got:\n%s", name, got.code, rbeWorkerEnvGraceRefused, why, got.out)
 			return
 		}
-		if got.summary != strict.summary+"\n"+line+"\n" || got.report != strict.report || !got.reported {
-			t.Errorf("%s: want today's summary plus %q and today's report; summary:\n%s\nreport:\n%s", name, line, got.summary, got.report)
+		// The summary says the same in a code span: the reason is gascity's
+		// text, never markup there.
+		spanned := rbeWorkerEnvGraceRefused + "`" + strings.TrimPrefix(line, rbeWorkerEnvGraceRefused) + "`"
+		if got.summary != strict.summary+"\n"+spanned+"\n" || got.report != strict.report || !got.reported {
+			t.Errorf("%s: want today's summary plus %q and today's report; summary:\n%s\nreport:\n%s", name, spanned, got.summary, got.report)
 		}
 		if strings.Contains(got.out, "##[") {
 			t.Errorf("%s: output holds a workflow command opener (##[):\n%s", name, got.out)
@@ -680,7 +683,7 @@ fi
 		t.Helper()
 		end := rbeTestISO(until)
 		notice := "::notice title=rbe worker-env grace::beads pins gascity's previous worker-env pin (" + stalePin + "): gascity re-pinned at commit " + f.sha +
-			", and rbe-west serves the previous pin until " + end + ". beads' worker-env sync PR must land before then"
+			"; beads may pin the previous pin until " + end + ", and rbe-west serves it until "
 		line := "worker-env: inside gascity's grace window: beads pins gascity's previous pin (" + stalePin + "), gascity main pins " + f.pin
 		if got.naps != naps {
 			t.Errorf("%s: slept %q, want %q", name, got.naps, naps)
@@ -825,7 +828,24 @@ fi
 	if err := os.Remove(filepath.Join(f.raw, commit, rbeWorkerEnvGraceFile)); err != nil {
 		t.Fatal(err)
 	}
-	refused("unreadable", run(beads, grace), "unreadable: could not fetch worker-env-grace.txt at gascity commit "+commit+" (curl exit ", "")
+	// Unreadable is worth reading again: it is read again every 15 seconds
+	// until the wait is over (and then refused), or until it reads.
+	refused("unreadable", run(beads, grace, "WORKER_ENV_SYNC_GRACE_WAIT=30"),
+		"unreadable: could not fetch worker-env-grace.txt at gascity commit "+commit+" (curl exit ", "15\n15\n")
+	covered("unreadable, then published while waiting", run(beads, grace, "GRACE_PUBLISH="+f.graceCommit(t, open.String())), until, "15\n")
+
+	// gascity's manifest with the record's Go must hash to the record's
+	// previous pin, the check rbe-west's previous-pin worker makes: here
+	// beads' copy has the same lines, but its go line elsewhere, so its pin
+	// is no host gascity's manifest rolls back to.
+	reordered := strings.Replace(f.stale, "go go version go1.26.9 linux/amd64\n", "", 1) + "go go version go1.26.9 linux/amd64\n"
+	f.grace(t, open.set("previous", rbeTestPin(reordered)).String())
+	reorderedBeads := f.beads(t, reordered, rbeTestPin(reordered))
+	reStrict, reGrace := run(reorderedBeads), run(reorderedBeads, grace)
+	const reWhy = rbeWorkerEnvGraceRefused + "other host: gascity's manifest with Go 1.26.9 hashes to " + "sha256:"
+	if reGrace.code != 1 || !strings.HasPrefix(reGrace.out, reStrict.out) || !strings.HasPrefix(strings.TrimPrefix(reGrace.out, reStrict.out), reWhy) {
+		t.Errorf("a copy whose lines are gascity's in another order: exit %d, want 1 with %q...:\n%s", reGrace.code, reWhy, reGrace.out)
+	}
 }
 
 // TestRBEWorkerEnvSyncRef: worker-env-sync-ref prints the gascity commit a

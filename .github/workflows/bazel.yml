@@ -464,12 +464,13 @@ jobs:
   # unreachable (exit 2: unknown) warns and proceeds: GitHub's availability
   # never blocks a PR. gascity's grace window: a re-pin gascity can roll back
   # (a Go release) publishes a record (worker-env-grace.txt on gascity's
-  # rbe/worker-env-grace branch), and rbe-west keeps workers of the previous
-  # pin through its two-hour window. In mode remote, while the repository
-  # variable RBE_WORKER_ENV_GRACE is true (the rollout switch; delete it to
-  # roll back), the check passes WORKER_ENV_SYNC_GRACE=1: a copy at that
-  # previous pin inside the window exits 3, and the lanes proceed with a
-  # notice on those workers, so PRs stay green until beads' sync PR lands.
+  # rbe/worker-env-grace branch): beads may keep the previous pin for two
+  # hours, and rbe-west serves it an hour longer. In mode remote, while the
+  # repository variable RBE_WORKER_ENV_GRACE is true (the rollout switch;
+  # delete it to roll back), the check passes WORKER_ENV_SYNC_GRACE=1: a
+  # copy at that previous pin inside the window exits 3, and the lanes
+  # proceed with a notice on those workers, so PRs stay green until beads'
+  # sync PR lands.
   # gascity publishes the record about a minute after the re-pin, and
   # worker-env-sync waits up to 150 seconds for it, inside this job's 5
   # minutes. Only mode remote: fork-ro executes on the separate oss-fork
