@@ -140,10 +140,18 @@ jobs:
           permission-pull-requests: write
 
       # push-token alone; it cannot see a PR exists, let alone touch one.
-      # Leased to the branch: a force-with-lease scoped to refs/heads/
-      # bot/worker-env-sync only, so a push can never move any other ref.
-      # pushed=1 is written only once the push has landed, and tells the
-      # PR step this run put a new commit on the branch.
+      # Idempotent and leased (#7533): the step reads the sync branch's tip
+      # from the push URL itself and, when that commit already carries this
+      # copy, makes no commit and no push, so every run while main's pin is
+      # stale (and the PR waits) is a no-op instead of failing on "stale
+      # info" (#7458). Otherwise it pushes under a lease on the tip it read,
+      # scoped to refs/heads/bot/worker-env-sync alone (an empty lease:
+      # create the branch only if it does not exist), so a branch that moved
+      # in between is never overwritten. A failed or ambiguous read stops
+      # the step before any commit. git's stderr is dropped where the
+      # credential-bearing URL could appear in it. pushed=1 is written only
+      # once the push has landed, and tells the PR step this run put a new
+      # commit on the branch.
       - name: Commit and push the sync branch
         id: push
         if: steps.sync.outputs.rc == '1'
@@ -157,11 +165,51 @@ jobs:
           GIT_COMMITTER_NAME: gastownhall-autofix[bot]
           GIT_COMMITTER_EMAIL: gastownhall-autofix[bot]@users.noreply.github.com
         run: |
-          git checkout -B "$BRANCH"
+          push_url="https://x-access-token:${PUSH_TOKEN}@github.com/${REPO}.git"
+          ref="refs/heads/$BRANCH"
+          remote_sha=""
+          if remote="$(git ls-remote --exit-code --refs "$push_url" "$ref" 2>/dev/null)"; then
+            remote_sha="${remote%%$'\t'*}"
+            # ls-remote matches a pattern against a ref's trailing path
+            # components, so refs/heads/x/refs/heads/$BRANCH would match too.
+            if [ "$remote" != "$remote_sha"$'\t'"$ref" ]; then
+              echo "::error::Unexpected sync branch response; nothing pushed."
+              exit 1
+            fi
+          else
+            rc=$?
+            if [ "$rc" -ne 2 ]; then
+              echo "::error::Could not read the sync branch; nothing pushed."
+              exit "$rc"
+            fi
+          fi
+
           git add platforms/BUILD.bazel tools/rbe/worker-env.txt
+          if [ -n "$remote_sha" ]; then
+            # Fetch the observed commit, not a ref that may have moved since
+            # ls-remote. Never consult origin's unrelated tracking refs.
+            if ! git fetch --quiet --no-tags --depth=1 "$push_url" "$remote_sha" 2>/dev/null; then
+              echo "::error::Could not fetch the observed sync commit; nothing pushed."
+              exit 1
+            fi
+            if git diff --cached --quiet "$remote_sha" -- platforms/BUILD.bazel tools/rbe/worker-env.txt; then
+              echo "worker-env autosync: desired files already on the sync branch; nothing pushed."
+              exit 0
+            else
+              rc=$?
+              if [ "$rc" -ne 1 ]; then
+                echo "::error::Could not compare the sync files; nothing pushed."
+                exit "$rc"
+              fi
+            fi
+          fi
+
+          git checkout -B "$BRANCH"
           git commit -m "$COMMIT_SUBJECT"
-          git push "https://x-access-token:${PUSH_TOKEN}@github.com/${REPO}.git" \
-            "HEAD:refs/heads/$BRANCH" "--force-with-lease=refs/heads/$BRANCH"
+          if ! git push --quiet "$push_url" "HEAD:$ref" "--force-with-lease=$ref:$remote_sha" 2>/dev/null; then
+            echo "::error::Sync push failed: the branch moved or the remote refused the write."
+            exit 1
+          fi
           echo "pushed=1" >> "$GITHUB_OUTPUT"
 
       # pr-token alone; it cannot push a commit, only act on the PR the
@@ -170,8 +218,8 @@ jobs:
       # status/reviewing when the review starts, so adding it to an open PR
       # would request a second review of a PR whose review is running,
       # failed, or done. Every run that gets past the push step reaches this
-      # step; once the push step can finish without pushing (a branch that
-      # already carries the copy), that is every run while main's pin is
+      # step, and the push step finishes without pushing once the branch
+      # already carries the copy, so that is every run while main's pin is
       # stale -- the whole time the PR waits on that review. An open PR is
       # edited only when this run pushed a new commit to it (pushed=1);
       # otherwise it is left as it is. Not gated on pushed itself: a run

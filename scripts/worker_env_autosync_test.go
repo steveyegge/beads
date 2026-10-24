@@ -167,8 +167,12 @@ func TestWorkerEnvAutosyncWorkflowShape(t *testing.T) {
 	if !strings.Contains(push.Run, workerEnvAutosyncBranch) && push.Env["BRANCH"] != workerEnvAutosyncBranch {
 		t.Errorf("push step does not reference the fixed branch %q", workerEnvAutosyncBranch)
 	}
-	if !strings.Contains(push.Run, "force-with-lease=refs/heads/$BRANCH") {
-		t.Errorf("push step run %q, want a --force-with-lease scoped to the fixed branch's ref alone", push.Run)
+	// #7533: the lease names the branch tip the step itself read (empty:
+	// the branch must not exist yet), never a remote-tracking ref this
+	// checkout does not have, so a repeat run cannot fail on "stale info"
+	// and a concurrent move of the branch is never overwritten.
+	if !strings.Contains(push.Run, `ref="refs/heads/$BRANCH"`) || !strings.Contains(push.Run, "--force-with-lease=$ref:$remote_sha") {
+		t.Errorf("push step run %q, want a lease scoped to the fixed branch and its observed SHA", push.Run)
 	}
 	// pushed=1 is the PR step's only evidence that this run moved the
 	// branch. It is written once, after git push: under bash -e a failed
@@ -219,8 +223,9 @@ func TestWorkerEnvAutosyncWorkflowShape(t *testing.T) {
 // reviewing 01:34:34Z, label removed 01:34:36Z), so adding it to a PR that
 // is already open requests another review of a PR whose review is running,
 // failed, or done. Every run that gets past the push step reaches this
-// step; once the push step can finish without pushing, that is every run
-// while main's pin is stale, the whole time the PR waits on that review.
+// step, and the push step finishes without pushing once the branch already
+// carries the copy (#7533), so that is every run while main's pin is stale,
+// the whole time the PR waits on that review.
 // The step labels only a PR it opens itself (in the gh pr create call),
 // edits an open PR only when this run pushed a new commit to it, and only
 // warns about an open PR that carries no review-pipeline label (triage
@@ -414,6 +419,31 @@ exit 127
 			t.Errorf("PR step ran %q after a failed lookup, want nothing (it could open a duplicate PR)", w)
 		}
 	})
+}
+
+// TestWorkerEnvAutosyncPushAgainstFixture executes the actual workflow Bash
+// against one local bare Git remote. The fixture redirects only the synthetic
+// authenticated URL and injects a concurrent ref move before the real push.
+// From #7533 (vishnujayvel): a repeat run whose copy is already on the sync
+// branch makes no commit and no push (and writes no pushed=1); a changed copy
+// is pushed under a lease on the tip it read; a branch that moved in between,
+// an unreadable remote and an ambiguous ls-remote answer each stop the step
+// without a push.
+func TestWorkerEnvAutosyncPushAgainstFixture(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skipf("worker-env autosync push fixture follows the Linux-only worker-env-autosync.yml test policy; GOOS=%s", runtime.GOOS)
+	}
+	python := requireHostTool(t, "python3")
+	requireHostTool(t, "bash")
+	requireHostTool(t, "git")
+	push := readCIWorkflow(t, workerEnvAutosyncWorkflow).job(t, workerEnvAutosyncJob).step(t, "Commit and push the sync branch")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, python, "-I", filepath.Join(bazelPolicyRoot(t), "scripts/worker_env_autosync_push_fixture.py"), "--fixture", t.TempDir())
+	cmd.Stdin = strings.NewReader(push.Run)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("worker-env autosync push fixture: %v\n%s", err, out)
+	}
 }
 
 // TestWorkerEnvAutosyncWorkflowNeverInterpolatesExpressionsInRun: every
