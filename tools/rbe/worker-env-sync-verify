@@ -37,19 +37,21 @@
 # showed first (head-sha), so a push in between cannot mix two heads.
 #
 # Verdict: arm (every check passed), refuse (one failed), unknown (one could
-# not be decided: GitHub or gascity unreachable, or the activity API not
-# yet showing the head's push), or none (no open sync PR). Unknown never
-# arms. Arming waits until the PR's required checks, CI Gate / Required and
-# PR Risk Gate / Required, have both passed on the head: GitHub then queues
-# it at once, from that head, and nothing stays armed for a later push to
+# not be decided: GitHub or gascity unreachable, or the activity API not yet
+# showing the head's push), or none (no open sync PR). Unknown never arms. A
+# queue entry for the head may stay (hold) on arm, and on unknown only while
+# GitHub or gascity did not answer a read: who pushed the head is no outage.
+# Arming waits until the PR's required checks, CI Gate / Required and PR
+# Risk Gate / Required, have both passed on the head: GitHub then queues it
+# at once, from that head, and nothing stays armed for a later push to
 # inherit. It stops after the PR has been queued three times at one head
-# (two re-arms after merge-queue ejections). The act job re-reads the PR
-# and acts only on what it finds (see the workflow); this script also
-# decides the refusal comment (once per head commit), the fallback label
-# (once, if arming is refused for lack of permission and the PR is in no
-# review already) and the CI re-run (once per head: a verified PR's PR or
-# PR Risk run of its head that failed, was cancelled or timed out on its
-# first attempt).
+# (two re-arms after merge-queue ejections). The act job re-reads the PR and
+# acts only on what it finds (see the workflow); this script also decides
+# the refusal comment (once per head commit), the fallback label (once, if
+# arming is refused for lack of permission and the PR is in no review
+# already) and the CI re-run (once per head: a verified PR's PR or PR Risk
+# run of its head that failed, was cancelled or timed out on its first
+# attempt).
 #
 # Everything it prints, on stdout and stderr, goes through defang below: the
 # runner reads workflow commands from a step's output, ::name:: at the
@@ -64,8 +66,8 @@
 # open sync PR itself, as a re-check does.
 #
 # Exit 0 (arm, none), 1 (refuse), 2 (unknown), 3 (it could not run). With
-# GITHUB_OUTPUT set it also writes pr, head-sha, verdict, arm, comment,
-# fallback-label, rerun (run ids) and reason.
+# GITHUB_OUTPUT set it also writes pr, head-sha, verdict, arm, hold,
+# comment, fallback-label, rerun (run ids) and reason.
 #
 # Env: REPO (default $GITHUB_REPOSITORY, then gastownhall/beads); the
 # event: EVENT_NAME, EVENT_ACTION, EVENT_SENDER (unset: a manual re-check).
@@ -102,6 +104,9 @@ defang() { sed -e ':a' -e 's/::/: :/g' -e 'ta' -e ':b' -e 's/##\[/# #[/g' -e 'tb
 
 failed=()
 undecided=()
+# Set when the activity API does not show the head's push: undecided, but
+# not a read GitHub or gascity failed to answer, so it holds no queue entry.
+unattributed=false
 log() { printf '%s\n' "$*" | tee -a "$tmp/checks"; }
 pass() { log "PASS $*"; }
 fail() {
@@ -120,8 +125,10 @@ quote() { sed 's/^/  | /' <<<"$1"; }
 # clean: API text with its control characters dropped, safe on one line.
 clean() { printf '%s' "$1" | tr -d '\000-\037\177'; }
 # annotate PREFIX TEXT: one workflow command of this script's own, on the
-# real stdout (fd 3), with TEXT defanged.
-annotate() { printf '%s%s\n' "$1" "$(clean "$2" | defang)" >&3; }
+# real stdout (fd 3), with TEXT defanged and its % escaped: the runner
+# decodes %25, %0D and %0A in a command's message, so a file name holding
+# %0A would otherwise show as a line break.
+annotate() { printf '%s%s\n' "$1" "$(clean "$2" | defang | sed 's/%/%25/g')" >&3; }
 # fence FILE: a run of backticks longer than any in FILE, to wrap it in a
 # markdown code block it cannot close.
 fence() {
@@ -310,6 +317,7 @@ check_pusher() {
 		fi
 		if [ "$attempt" -ge 3 ] || [ "$state" != open ]; then
 			unknown "pusher: the newest push to $branch the activity API shows ($kind) left it at '$(clean "$after")', not the head; it may not show the head's push yet"
+			unattributed=true
 			return
 		fi
 		attempt=$((attempt + 1))
@@ -399,7 +407,7 @@ check_ci() {
 	done
 }
 
-verdict="" arm=false comment=false fallback=false
+verdict="" arm=false hold=false comment=false fallback=false
 rerun=()
 notes=()
 
@@ -414,11 +422,21 @@ decide() {
 		verdict=arm
 	fi
 	[ "$state" = open ] || return 0
+	case $verdict in
+	arm) hold=true ;;
+	unknown)
+		if [ "$unattributed" = true ]; then
+			notes+=("the activity API does not show who pushed the head, so the act job holds no queue entry for it")
+		else
+			hold=true
+		fi
+		;;
+	esac
 	if [ "$verdict" = arm ]; then
 		if [ "$queued" = true ]; then
 			notes+=("queued already")
 		elif [ "$armed" = true ]; then
-			notes+=("auto-merge is armed already")
+			notes+=("auto-merge is armed but the PR is not queued: the act job disables it, and a later run arms afresh")
 		elif [ "$green" != true ]; then
 			notes+=("not armed until ${required_checks[0]} and ${required_checks[1]} pass on the head (a PR or PR Risk run's completion, or the 15-minute re-check, looks again)")
 		elif [ "$queue_entries" -ge "$max_queue_entries" ]; then
@@ -516,32 +534,26 @@ report() {
 	# What the act job does with this verdict, from the state read here
 	# (it re-reads the PR itself before acting).
 	if [ "$state" = open ]; then
-		case $verdict in
-		arm)
-			if [ "$arm" = true ]; then
-				would+=("arm auto-merge on #$pr at $head_sha; both required checks passed, so GitHub queues it at once")
-				if [ "$fallback" = true ]; then
-					would+=("label #$pr $review_label instead, should arming be refused for lack of permission")
-				fi
-			fi
-			;;
-		unknown)
-			if [ "$armed" = true ] && [ "$queued" = false ]; then
-				would+=("disable the pending auto-merge on #$pr")
-			fi
-			if [ "$queued" = true ]; then
-				would+=("hold #$pr in the merge queue (unknown is transient; a refusal or a new head takes it out)")
-			fi
-			;;
-		*)
+		if [ "$hold" != true ]; then
 			if [ "$queued" = true ]; then
 				would+=("take #$pr out of the merge queue")
 			fi
 			if [ "$armed" = true ]; then
 				would+=("disable auto-merge on #$pr")
 			fi
-			;;
-		esac
+		elif [ "$armed" = true ] && [ "$queued" = true ]; then
+			would+=("disable auto-merge on #$pr, keeping it in the merge queue")
+		elif [ "$armed" = true ]; then
+			would+=("disable the pending auto-merge on #$pr")
+		elif [ "$arm" = true ]; then
+			would+=("arm auto-merge on #$pr at $head_sha; both required checks passed, so GitHub queues it at once")
+			if [ "$fallback" = true ]; then
+				would+=("label #$pr $review_label instead, should arming be refused for lack of permission")
+			fi
+		fi
+		if [ "$hold" = true ] && [ "$verdict" = unknown ] && [ "$queued" = true ]; then
+			would+=("hold #$pr in the merge queue (unknown is transient; a refusal or a new head takes it out)")
+		fi
 	fi
 	[ "$comment" = true ] && would+=("comment the refusal on #$pr")
 	for line in "${rerun[@]}"; do
@@ -575,6 +587,7 @@ report() {
 			echo "head-sha=$head_sha"
 			echo "verdict=$verdict"
 			echo "arm=$arm"
+			echo "hold=$hold"
 			echo "comment=$comment"
 			echo "fallback-label=$fallback"
 			echo "rerun=${rerun[*]}"

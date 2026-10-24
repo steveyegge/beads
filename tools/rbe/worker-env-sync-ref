@@ -15,10 +15,11 @@
 # (refs/heads/x/refs/heads/main). A 40-hex REF is a commit already and is
 # printed as is, with no lookup. Prints the 40-hex commit alone on stdout,
 # or nothing, exiting non-zero, when gascity has no such branch or cannot be
-# reached.
+# reached in time.
 #
 # Env: tests only: WORKER_ENV_SYNC_GIT_URL, gascity's git URL (default
-# https://github.com/gastownhall/gascity).
+# https://github.com/gastownhall/gascity), and WORKER_ENV_SYNC_GIT_TIMEOUT,
+# the lookup's bound in seconds (default 30).
 set -euo pipefail
 
 ref=${1:-main}
@@ -27,9 +28,17 @@ if [[ $ref =~ ^[0-9a-f]{40}$ ]]; then
 	exit 0
 fi
 url=${WORKER_ENV_SYNC_GIT_URL:-https://github.com/gastownhall/gascity}
-# Bound a stalled transfer: git has no overall timeout, and a hung lookup
-# would hold the calling job until its own timeout.
-refs=$(GIT_TERMINAL_PROMPT=0 git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=20 ls-remote --refs "$url" "refs/heads/$ref")
+# Bound the lookup as a whole: http.lowSpeedLimit and lowSpeedTime cut off
+# only a transfer that stalls, and git has no connect timeout (libcurl's
+# default is 300 seconds), so a hung connect would hold the calling job
+# (bazel.yml's rbe job has 5 minutes) until its own timeout. timeout(1) is
+# coreutils', on every runner that calls this; a host without it (macOS)
+# looks up unbounded.
+lookup=(git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=20 ls-remote --refs "$url" "refs/heads/$ref")
+if command -v timeout >/dev/null; then
+	lookup=(timeout "${WORKER_ENV_SYNC_GIT_TIMEOUT:-30}" "${lookup[@]}")
+fi
+refs=$(GIT_TERMINAL_PROMPT=0 "${lookup[@]}")
 sha=$(awk -v want="refs/heads/$ref" '$2 == want { print $1 }' <<<"$refs")
 if ! [[ $sha =~ ^[0-9a-f]{40}$ ]]; then
 	echo "worker-env-sync-ref: gascity ($url) has no branch $ref" >&2

@@ -492,7 +492,7 @@ func TestWorkerEnvSyncAutomergeVerifyJob(t *testing.T) {
 		t.Errorf("verify step name %q id %q if %q env %v run %q; want id verify running %s \"$PR\" with env %v", step.Name, step.ID, step.If, step.Env, step.Run, workerEnvSyncVerify, wantEnv)
 	}
 	wantOutputs := map[string]string{}
-	for _, k := range []string{"pr", "head-sha", "verdict", "arm", "comment", "fallback-label", "rerun", "reason"} {
+	for _, k := range []string{"pr", "head-sha", "verdict", "arm", "hold", "comment", "fallback-label", "rerun", "reason"} {
 		wantOutputs[k] = "${{ steps.verify.outputs." + k + " }}"
 	}
 	if !reflect.DeepEqual(job.Outputs, wantOutputs) {
@@ -565,9 +565,10 @@ func TestWorkerEnvSyncAutomergeActJob(t *testing.T) {
 	)
 	wantEnv := map[string]map[string]string{
 		workerEnvStateStep: {"GH_TOKEN": state, "REPO": repo, "VERDICT": "${{ needs.verify.outputs.verdict }}",
-			"VERIFIED_HEAD": "${{ needs.verify.outputs.head-sha }}", "ARM": "${{ needs.verify.outputs.arm }}"},
-		workerEnvTakeoutStep: {"GH_TOKEN": workerEnvMergeToken, "REPO": repo, "PR": pr, "NODE_ID": node, "TAKEOUT": "${{ steps.state.outputs.takeout }}"},
-		workerEnvArmStep:     {"GH_TOKEN": workerEnvMergeToken, "REPO": repo, "PR": pr, "NODE_ID": node, "HEAD": "${{ steps.state.outputs.head }}"},
+			"VERIFIED_HEAD": "${{ needs.verify.outputs.head-sha }}", "ARM": "${{ needs.verify.outputs.arm }}", "HOLD": "${{ needs.verify.outputs.hold }}"},
+		workerEnvTakeoutStep: {"GH_TOKEN": workerEnvMergeToken, "REPO": repo, "PR": pr, "NODE_ID": node,
+			"TAKEOUT": "${{ steps.state.outputs.takeout }}", "HEAD": "${{ steps.state.outputs.head }}"},
+		workerEnvArmStep: {"GH_TOKEN": workerEnvMergeToken, "REPO": repo, "PR": pr, "NODE_ID": node, "HEAD": "${{ steps.state.outputs.head }}"},
 		workerEnvCommentStep: {"GH_TOKEN": workerEnvPRToken, "REPO": repo, "PR": pr, "HEAD_SHA": "${{ needs.verify.outputs.head-sha }}",
 			"REASON": "${{ needs.verify.outputs.reason }}", "RUN_URL": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"},
 		workerEnvLabelStep: {"GH_TOKEN": workerEnvPRToken, "REPO": repo, "PR": pr, "LABEL": workerEnvSyncReviewLabel},
@@ -641,6 +642,8 @@ func TestWorkerEnvSyncAutomergeActJob(t *testing.T) {
 			[]string{st, workerEnvMergeTokenStep, workerEnvTakeoutStep}},
 		{"take a pending auto-merge out", outcome{arm: "false", takeout: "pending", pr: "4321", mint: "success"},
 			[]string{st, workerEnvMergeTokenStep, workerEnvTakeoutStep}},
+		{"take a queued PR's auto-merge out", outcome{arm: "false", takeout: "auto-merge", pr: "4321", mint: "success"},
+			[]string{st, workerEnvMergeTokenStep, workerEnvTakeoutStep}},
 		{"take out, no token: the take-out step fails loudly", outcome{arm: "false", takeout: "all", pr: "4321", mint: "failure"},
 			[]string{st, workerEnvMergeTokenStep, workerEnvTakeoutStep}},
 		{"refused, first time: comment", outcome{arm: "false", pr: "4321", comment: "true"},
@@ -709,7 +712,8 @@ func workerEnvShellCommands(script string) []string {
 // $FAKE_GH_DIR/api/<endpoint with / as __>, with --jq applied by jq (a
 // missing file is gh's 404); the n-th GraphQL query is served from
 // api/graphql.<n> when that file exists, else api/graphql. A GraphQL
-// mutation answers {"data":{}} (or fails with fail/mutation's content). A
+// mutation answers {"data":{}}, or fails with the content of
+// fail/mutation.<n> (the n-th mutation) or fail/mutation (every one). A
 // file fail/<subcommand>_<subsubcommand> makes that invocation fail with
 // its content on stderr. Every call's argv is kept, NUL-separated, one file
 // per call.
@@ -734,7 +738,11 @@ if [ "${1-}" = api ]; then
     shift
   done
   if [ "$endpoint" = graphql ] && [[ $query == mutation* ]]; then
-    if [ -f "$FAKE_GH_DIR/fail/mutation" ]; then cat "$FAKE_GH_DIR/fail/mutation" >&2; exit 1; fi
+    m=$(( $(cat "$FAKE_GH_DIR/mutations" 2>/dev/null || echo 0) + 1 ))
+    echo "$m" > "$FAKE_GH_DIR/mutations"
+    for f in "$FAKE_GH_DIR/fail/mutation.$m" "$FAKE_GH_DIR/fail/mutation"; do
+      if [ -f "$f" ]; then cat "$f" >&2; exit 1; fi
+    done
     echo '{"data":{}}'
     exit 0
   fi
@@ -841,16 +849,23 @@ func workerEnvPRState(head string, queued, armed bool) string {
 // TestWorkerEnvSyncAutomergeActSteps runs act's real step scripts against
 // the fake gh. The state step looks the PR up itself and arms only on
 // verify's "arm" for the head it reads (and only if verify found the head
-// green, and the PR neither queued nor armed); it holds a queue entry on
-// an explicit "unknown" for that head, disabling a pending auto-merge; any
-// other verdict, a lost one, or a moved head takes everything out. The
-// take-out step uses the GraphQL mutations (gh pr merge --disable-auto
-// leaves a queued PR as it is) and reads the state again after disabling,
-// so an entry a pending auto-merge queued meanwhile comes out too. The arm
-// step binds gh pr merge --auto to the head and, should GitHub not queue
-// the PR at once, disables the pending auto-merge; a permission refusal is
-// the fallback signal. The refusal comment's code block cannot be closed by
-// the reasons, and it tells how to start over.
+// green, and the PR neither queued nor armed); that verdict, or an
+// explicit "unknown", for that head holds a queue entry when verify says
+// hold (an "unknown" from a push the activity API does not show does
+// not); an auto-merge is taken out whatever the verdict, keeping a queue
+// entry the head may hold; any other verdict, a lost one, or a moved head
+// takes everything out. The take-out step takes out, through the GraphQL
+// mutations (gh pr merge --disable-auto leaves a queued PR as it is),
+// whatever it finds, but a queue entry under "auto-merge" for the head
+// the state step read: auto-merge first, so it cannot queue the PR again,
+// then the queue entry, reading the state again after each round, so an
+// entry a pending auto-merge queued meanwhile comes out too, and a failed
+// mutation only warns; anything left after two rounds, or a state it
+// cannot read, fails it. The arm step binds gh pr merge --auto to the
+// head and then disables whatever auto-merge it reads, queued or not (the
+// queue entry stays), the same way; a permission refusal is the fallback
+// signal. The refusal comment's code block cannot be closed by the
+// reasons, and it tells how to start over.
 func TestWorkerEnvSyncAutomergeActSteps(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skipf("the act job runs only on ubuntu-latest; GOOS=%s", runtime.GOOS)
@@ -872,28 +887,42 @@ func TestWorkerEnvSyncAutomergeActSteps(t *testing.T) {
 	listEndpoint := "repos/gastownhall/beads/pulls?state=open&base=main&head=gastownhall:bot/worker-env-sync&per_page=100"
 
 	for _, c := range []struct {
-		name, verdict, verified, arm string
-		queued, armed                bool
-		wantArm, wantTakeout         string
+		name, verdict, verified, arm, hold string
+		queued, armed                      bool
+		wantArm, wantTakeout               string
 	}{
-		{"verified and green: arm", "arm", head, "true", false, false, "true", ""},
-		{"verified, not green yet: wait", "arm", head, "false", false, false, "false", ""},
-		{"verified, queued: nothing", "arm", head, "true", true, false, "false", ""},
-		{"verified an older head, armed: take out", "arm", other, "true", false, true, "false", "all"},
-		{"verified an older head, nothing armed: nothing", "arm", other, "true", false, false, "false", ""},
-		{"refused, queued: take out", "refuse", head, "false", true, false, "false", "all"},
-		{"refused, armed: take out", "refuse", head, "false", false, true, "false", "all"},
-		{"unknown, queued: hold", "unknown", head, "false", true, false, "false", ""},
-		{"unknown, pending auto-merge: disable it", "unknown", head, "false", false, true, "false", "pending"},
-		{"unknown for an older head, queued: take out", "unknown", other, "false", true, false, "false", "all"},
-		{"verdict lost, queued: take out", "", "", "", true, false, "false", "all"},
-		{"verdict garbled, armed: take out", "arm::add-mask", "xyz", "true", false, true, "false", "all"},
+		{"verified and green: arm", "arm", head, "true", "true", false, false, "true", ""},
+		{"verified, not green yet: wait", "arm", head, "false", "true", false, false, "false", ""},
+		{"verified, queued: nothing", "arm", head, "true", "true", true, false, "false", ""},
+		// GitHub keeps a pending auto-merge across a later push, green or
+		// not, and one left on a queued PR could queue it again after a push
+		// or an ejection: the auto-merge comes out, the verified head's
+		// queue entry stays, and a later run arms afresh.
+		{"verified, queued and armed: disable auto-merge, keep the queue entry", "arm", head, "true", "true", true, true, "false", "auto-merge"},
+		{"verified, not green yet, pending auto-merge: disable it", "arm", head, "false", "true", false, true, "false", "pending"},
+		{"verified and green, pending auto-merge: disable it", "arm", head, "true", "true", false, true, "false", "pending"},
+		{"verified an older head, armed: take out", "arm", other, "true", "true", false, true, "false", "all"},
+		{"verified an older head, nothing armed: nothing", "arm", other, "true", "true", false, false, "false", ""},
+		{"verified, hold lost, queued: take out", "arm", head, "true", "", true, false, "false", "all"},
+		{"refused, queued: take out", "refuse", head, "false", "false", true, false, "false", "all"},
+		{"refused, armed: take out", "refuse", head, "false", "false", false, true, "false", "all"},
+		{"refused, hold set anyway, queued: take out", "refuse", head, "false", "true", true, false, "false", "all"},
+		{"unknown, queued: hold", "unknown", head, "false", "true", true, false, "false", ""},
+		{"unknown, queued and armed: disable auto-merge, keep the queue entry", "unknown", head, "false", "true", true, true, "false", "auto-merge"},
+		{"unknown, pending auto-merge: disable it", "unknown", head, "false", "true", false, true, "false", "pending"},
+		// No hold: the activity API does not show who pushed the head,
+		// which is no outage.
+		{"unknown without hold, queued: take out", "unknown", head, "false", "false", true, false, "false", "all"},
+		{"unknown without hold, queued and armed: take out", "unknown", head, "false", "false", true, true, "false", "all"},
+		{"unknown for an older head, queued: take out", "unknown", other, "false", "true", true, false, "false", "all"},
+		{"verdict lost, queued: take out", "", "", "", "", true, false, "false", "all"},
+		{"verdict garbled, armed: take out", "arm::add-mask", "xyz", "true", "true::add-mask", false, true, "false", "all"},
 	} {
 		t.Run("state: "+c.name, func(t *testing.T) {
 			r := stepRun(t, workerEnvStateStep, func(d string) {
 				workerEnvFakeAPI(t, d, listEndpoint, openList)
 				workerEnvFakeAPI(t, d, "graphql", workerEnvPRState(head, c.queued, c.armed))
-			}, "VERDICT="+c.verdict, "VERIFIED_HEAD="+c.verified, "ARM="+c.arm)
+			}, "VERDICT="+c.verdict, "VERIFIED_HEAD="+c.verified, "ARM="+c.arm, "HOLD="+c.hold)
 			out := parseWorkerEnvOutput(t, r.output)
 			want := map[string]string{"pr": "4321", "head": head, "node-id": "PR_kwDOQAyAEs6abc", "arm": c.wantArm, "takeout": c.wantTakeout}
 			if r.code != 0 || !reflect.DeepEqual(out, want) {
@@ -926,31 +955,82 @@ func TestWorkerEnvSyncAutomergeActSteps(t *testing.T) {
 		}
 	})
 
-	takeout := []string{"PR=4321", "NODE_ID=PR_kwDOQAyAEs6abc"}
+	// The take-out step's successive reads of the PR, the mutations (by
+	// number) that fail, and the mutations the reads call for. Under "all"
+	// and "pending" everything comes out: the state step's "pending" found
+	// a pending auto-merge and no queue entry, so an entry here is one that
+	// auto-merge made since. Under "auto-merge" a queue entry for the head
+	// the state step read stays. A failed mutation only warns: the next
+	// read decides.
+	takeout := []string{"PR=4321", "NODE_ID=PR_kwDOQAyAEs6abc", "HEAD=" + head}
+	read := func(queued, armed bool) string { return workerEnvPRState(head, queued, armed) }
+	moved := func(queued, armed bool) string { return workerEnvPRState(other, queued, armed) }
+	garbled := strings.Replace(read(true, false), `"isInMergeQueue":true`, `"isInMergeQueue":null`, 1)
+	disable, dequeue := "disablePullRequestAutoMerge", "dequeuePullRequest"
 	for _, c := range []struct {
-		name, mode string
-		reads      []string
-		want       []string
+		name, takeout string
+		reads         []string
+		failing       []int
+		want          []string
+		fails         bool
 	}{
-		{"all, queued", "all", []string{workerEnvPRState(head, true, false), workerEnvPRState(head, false, false)}, []string{"dequeuePullRequest"}},
-		{"all, queued and armed", "all", []string{workerEnvPRState(head, true, true), workerEnvPRState(head, false, false)}, []string{"dequeuePullRequest", "disablePullRequestAutoMerge"}},
-		{"all, armed", "all", []string{workerEnvPRState(head, false, true), workerEnvPRState(head, false, false)}, []string{"disablePullRequestAutoMerge"}},
-		{"all, a pending auto-merge queued it meanwhile", "all", []string{workerEnvPRState(head, false, true), workerEnvPRState(head, true, false)}, []string{"disablePullRequestAutoMerge", "dequeuePullRequest"}},
-		{"pending", "pending", []string{workerEnvPRState(head, false, true), workerEnvPRState(head, false, false)}, []string{"disablePullRequestAutoMerge"}},
-		{"pending, it queued meanwhile", "pending", []string{workerEnvPRState(head, false, true), workerEnvPRState(head, true, false)}, []string{"disablePullRequestAutoMerge", "dequeuePullRequest"}},
-		{"pending, queued before the step read it", "pending", []string{workerEnvPRState(head, true, true), workerEnvPRState(head, true, true)}, []string{"dequeuePullRequest"}},
+		{"queued", "all", []string{read(true, false), read(false, false)}, nil, []string{dequeue}, false},
+		{"armed", "all", []string{read(false, true), read(false, false)}, nil, []string{disable}, false},
+		{"queued and armed: auto-merge first, so it cannot queue it again", "all", []string{read(true, true), read(false, false)}, nil,
+			[]string{disable, dequeue}, false},
+		{"a pending auto-merge queued it meanwhile", "pending", []string{read(false, true), read(true, false), read(false, false)}, nil,
+			[]string{disable, dequeue}, false},
+		{"nothing left to take out", "all", []string{read(false, false)}, nil, nil, false},
+		{"still queued after two rounds: fails", "all", []string{read(true, false), read(true, false), read(true, false)}, nil,
+			[]string{dequeue, dequeue}, true},
+		{"still armed after two rounds: fails", "pending", []string{read(false, true), read(false, true), read(false, true)}, nil,
+			[]string{disable, disable}, true},
+		{"state garbled: fails", "all", []string{garbled}, nil, nil, true},
+		{"state garbled after a round: fails", "pending", []string{read(false, true), garbled}, nil, []string{disable}, true},
+		{"auto-merge: queued and armed, the queue entry kept", "auto-merge", []string{read(true, true), read(true, false)}, nil,
+			[]string{disable}, false},
+		{"auto-merge: no longer queued", "auto-merge", []string{read(false, true), read(false, false)}, nil, []string{disable}, false},
+		{"auto-merge: the head moved, so everything out", "auto-merge", []string{moved(true, true), moved(false, false)}, nil,
+			[]string{disable, dequeue}, false},
+		{"auto-merge: still armed after two rounds: fails", "auto-merge", []string{read(true, true), read(true, true), read(true, true)}, nil,
+			[]string{disable, disable}, true},
+		{"a failed disable, then queued meanwhile: round 2 takes it out", "pending",
+			[]string{read(false, true), read(true, true), read(false, false)}, []int{1}, []string{disable, disable, dequeue}, false},
+		{"a failed dequeue: round 2 takes it out", "all", []string{read(true, true), read(true, false), read(false, false)}, []int{2},
+			[]string{disable, dequeue, dequeue}, false},
+		{"every mutation failing: fails", "all", []string{read(true, false), read(true, false), read(true, false)}, []int{1, 2},
+			[]string{dequeue, dequeue}, true},
 	} {
 		t.Run("take out: "+c.name, func(t *testing.T) {
 			r := stepRun(t, workerEnvTakeoutStep, func(d string) {
 				for i, s := range c.reads {
 					workerEnvFakeAPI(t, d, fmt.Sprintf("graphql.%d", i+1), s)
 				}
-			}, append(takeout, "TAKEOUT="+c.mode)...)
-			if got := workerEnvMutations(r.calls); r.code != 0 || !slices.Equal(got, c.want) {
-				t.Errorf("take-out %s: exit %d, mutations %v; want %v\n%s", c.name, r.code, got, c.want, r.out)
+				for _, n := range c.failing {
+					rbeTestWrite(t, filepath.Join(d, "fail", fmt.Sprintf("mutation.%d", n)), "gh: HTTP 502: Bad Gateway (https://api.github.com/graphql)\n", 0o644)
+				}
+			}, append(takeout, "TAKEOUT="+c.takeout)...)
+			got := workerEnvMutations(r.calls)
+			if (r.code != 0) != c.fails || !slices.Equal(got, c.want) || c.fails != strings.Contains(r.out, "::error::") {
+				t.Errorf("take-out %s: exit %d, mutations %v; want %v, failing with an error: %v\n%s", c.name, r.code, got, c.want, c.fails, r.out)
+			}
+			if c.fails && len(c.reads) > 1 && !strings.Contains(r.out, "take it out by hand") {
+				t.Errorf("take-out %s: the error does not say to take it out by hand\n%s", c.name, r.out)
+			}
+			if warned := strings.Contains(r.out, "::warning::"); warned != (len(c.failing) > 0) {
+				t.Errorf("take-out %s: warned %v, want %v (one per failed mutation)\n%s", c.name, warned, len(c.failing) > 0, r.out)
+			}
+			if reads := len(r.calls) - len(got); reads != len(c.reads) {
+				t.Errorf("take-out %s: read the state %d times, want %d\n%s", c.name, reads, len(c.reads), r.out)
 			}
 		})
 	}
+	t.Run("take out, the state read failing", func(t *testing.T) {
+		r := stepRun(t, workerEnvTakeoutStep, nil, append(takeout, "TAKEOUT=all")...)
+		if r.code == 0 || len(workerEnvMutations(r.calls)) != 0 || !strings.Contains(r.out, "::error::could not read #4321's queue and auto-merge state") {
+			t.Errorf("take-out with the PR unreadable: exit %d, calls %q; want a failure with an error and no mutation\n%s", r.code, r.calls, r.out)
+		}
+	})
 	t.Run("take out with no token", func(t *testing.T) {
 		r := stepRun(t, workerEnvTakeoutStep, nil, append(takeout, "TAKEOUT=all", "GH_TOKEN=")...)
 		if r.code == 0 || len(r.calls) != 0 || !strings.Contains(r.out, "::error") {
@@ -958,20 +1038,57 @@ func TestWorkerEnvSyncAutomergeActSteps(t *testing.T) {
 		}
 	})
 
+	// The arm step's reads after gh pr merge --auto (up to three polls for
+	// the queue, then one after each disable), the mutations (by number)
+	// that fail, and the mutations the reads call for: nothing stays
+	// armed, and a queue entry stays.
 	armEnv := []string{"PR=4321", "NODE_ID=PR_kwDOQAyAEs6abc", "HEAD=" + head}
 	armCall := []string{"pr", "merge", "4321", "--repo", "gastownhall/beads", "--auto", "--squash", "--match-head-commit", head}
-	t.Run("arm: GitHub queues it at once", func(t *testing.T) {
-		r := stepRun(t, workerEnvArmStep, func(d string) { workerEnvFakeAPI(t, d, "graphql", workerEnvPRState(head, true, false)) }, armEnv...)
-		if r.code != 0 || !reflect.DeepEqual(r.calls[0], armCall) || len(workerEnvMutations(r.calls)) != 0 || r.output != "" {
-			t.Errorf("arm: exit %d, calls %q, output %q; want %q, no mutation\n%s", r.code, r.calls, r.output, armCall, r.out)
-		}
-	})
-	t.Run("arm: not queued at once, so disarmed", func(t *testing.T) {
-		r := stepRun(t, workerEnvArmStep, func(d string) { workerEnvFakeAPI(t, d, "graphql", workerEnvPRState(head, false, true)) }, armEnv...)
-		if r.code != 0 || !slices.Equal(workerEnvMutations(r.calls), []string{"disablePullRequestAutoMerge"}) || !strings.Contains(r.out, "::warning::GitHub did not queue #4321 at once") {
-			t.Errorf("arm not queued: exit %d, mutations %v; want the pending auto-merge disabled with a warning\n%s", r.code, workerEnvMutations(r.calls), r.out)
-		}
-	})
+	pending := read(false, true)
+	for _, c := range []struct {
+		name    string
+		reads   []string
+		failing []int
+		want    []string
+		fails   bool
+		says    string
+	}{
+		{"GitHub queues it at once", []string{read(true, false)}, nil, nil, false, "#4321 is in the merge queue at " + head},
+		{"queued at the second poll", []string{pending, read(true, false)}, nil, nil, false, "#4321 is in the merge queue at " + head},
+		{"queued with auto-merge still armed: disarmed, the queue entry kept", []string{read(true, true), read(true, false)}, nil,
+			[]string{disable}, false, "#4321 is in the merge queue at " + head},
+		{"not queued at once, so disarmed", []string{pending, pending, pending, read(false, false)}, nil,
+			[]string{disable}, false, "::warning::GitHub did not queue #4321 at once"},
+		{"queued by the pending auto-merge meanwhile: disarmed, the queue entry kept", []string{pending, pending, pending, read(true, false)}, nil,
+			[]string{disable}, false, "#4321 is in the merge queue at " + head},
+		{"a failed disable: the second disarms it", []string{pending, pending, pending, pending, read(false, false)}, []int{1},
+			[]string{disable, disable}, false, "::warning::disabling auto-merge on #4321 failed"},
+		{"still armed after two disables: fails", []string{pending, pending, pending, pending, pending}, nil,
+			[]string{disable, disable}, true, "::error::after two disables #4321's auto-merge is still armed"},
+		{"a garbled poll: fails", []string{garbled}, nil, nil, true, "::error::could not read #4321's queue and auto-merge state"},
+		{"a garbled read after a disable: fails", []string{read(true, true), garbled}, nil,
+			[]string{disable}, true, "::error::could not read #4321's queue and auto-merge state"},
+	} {
+		t.Run("arm: "+c.name, func(t *testing.T) {
+			r := stepRun(t, workerEnvArmStep, func(d string) {
+				for i, s := range c.reads {
+					workerEnvFakeAPI(t, d, fmt.Sprintf("graphql.%d", i+1), s)
+				}
+				for _, n := range c.failing {
+					rbeTestWrite(t, filepath.Join(d, "fail", fmt.Sprintf("mutation.%d", n)), "gh: HTTP 502: Bad Gateway (https://api.github.com/graphql)\n", 0o644)
+				}
+			}, armEnv...)
+			got := workerEnvMutations(r.calls)
+			if (r.code != 0) != c.fails || len(r.calls) == 0 || !reflect.DeepEqual(r.calls[0], armCall) || !slices.Equal(got, c.want) || r.output != "" ||
+				!strings.Contains(r.out, c.says) {
+				t.Errorf("arm %s: exit %d, calls %q, mutations %v, output %q; want %q first, mutations %v, failing: %v, saying %q\n%s",
+					c.name, r.code, r.calls, got, r.output, armCall, c.want, c.fails, c.says, r.out)
+			}
+			if reads := len(r.calls) - 1 - len(got); reads != len(c.reads) {
+				t.Errorf("arm %s: read the state %d times, want %d\n%s", c.name, reads, len(c.reads), r.out)
+			}
+		})
+	}
 	t.Run("arm refused for lack of permission", func(t *testing.T) {
 		r := stepRun(t, workerEnvArmStep, func(d string) {
 			rbeTestWrite(t, filepath.Join(d, "fail", "pr_merge"), "GraphQL: Resource not accessible by integration (enablePullRequestAutoMerge)\n", 0o644)
@@ -1277,6 +1394,16 @@ func workerEnvCommandLines(out string) []string {
 	return got
 }
 
+// workerEnvRunnerMessage: a workflow command's message as the runner reads
+// it, decoding %0D, %0A and %25, in that order (actions/runner's
+// ActionCommand.UnescapeData).
+func workerEnvRunnerMessage(data string) string {
+	for _, m := range [][2]string{{"%0D", "\r"}, {"%0A", "\n"}, {"%25", "%"}} {
+		data = strings.ReplaceAll(data, m[0], m[1])
+	}
+	return data
+}
+
 // TestWorkerEnvSyncVerify runs tools/rbe/worker-env-sync-verify from a
 // scratch copy of the trusted scripts against the fake gh's API (the
 // head's files served by the contents API, commits and files by compare at
@@ -1286,8 +1413,9 @@ func workerEnvCommandLines(out string) []string {
 // what worker-env-autosync.yml pushes is refused with its own reason; what
 // cannot be decided is unknown, which never arms. Its only workflow
 // commands are its own annotations, however the PR's files and file names
-// are spelled. It checks the decisions the act and rerun jobs carry out,
-// and that every gh call it makes is a read.
+// are spelled, and each message stays one line once the runner decodes
+// it. It checks the decisions the act and rerun jobs carry out, and that
+// every gh call it makes is a read.
 func TestWorkerEnvSyncVerify(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skipf("the verifier runs only on worker-env-sync-automerge.yml's ubuntu-latest runner; GOOS=%s", runtime.GOOS)
@@ -1306,7 +1434,7 @@ func TestWorkerEnvSyncVerify(t *testing.T) {
 	marker := func(sha string) string { return "<!-- worker-env-sync-automerge refused " + sha + " -->\nrefused" }
 	const before, after = "2026-10-24T00:30:00Z", "2026-10-24T02:00:00Z"
 	// Workflow commands, both spellings, in the PR's BUILD file, manifest and
-	// file names.
+	// file names (one of them a line break only once the runner decodes it).
 	const inject = "##[add-mask]true\n::add-mask::true\n"
 
 	type want struct {
@@ -1323,9 +1451,10 @@ func TestWorkerEnvSyncVerify(t *testing.T) {
 		env     []string
 		noArg   bool
 		want    want
+		says    string // a line of the dry run's report
 	}{
 		{name: "good sync PR, CI green", want: want{0, "arm", nil, nil, map[string]string{
-			"pr": "4321", "head-sha": workerEnvTestHead, "arm": "true", "comment": "false", "fallback-label": "true", "rerun": "", "reason": ""}}},
+			"pr": "4321", "head-sha": workerEnvTestHead, "arm": "true", "hold": "true", "comment": "false", "fallback-label": "true", "rerun": "", "reason": ""}}},
 		{name: "good sync PR on a synchronize the bot pushed", env: []string{"EVENT_ACTION=synchronize", "EVENT_SENDER=" + workerEnvSyncPushBot},
 			want: want{0, "arm", nil, nil, map[string]string{"arm": "true"}}},
 		{name: "CI still running", mutate: func(c *workerEnvVerifyCase) { c.checks["PR Risk Gate / Required"] = "in_progress" },
@@ -1339,11 +1468,18 @@ func TestWorkerEnvSyncVerify(t *testing.T) {
 		{name: "queued three times, twice before this head", mutate: func(c *workerEnvVerifyCase) { c.queuedAt = []string{before, before, after} },
 			want: want{0, "arm", nil, nil, map[string]string{"arm": "true"}}},
 		{name: "already armed", mutate: func(c *workerEnvVerifyCase) { c.autoMerge = true },
-			want: want{0, "arm", nil, nil, map[string]string{"arm": "false", "fallback-label": "false"}}},
+			want: want{0, "arm", nil, nil, map[string]string{"arm": "false", "hold": "true", "fallback-label": "false"}},
+			says: "the guard would: disable the pending auto-merge on #4321"},
 		{name: "already queued", mutate: func(c *workerEnvVerifyCase) { c.queued = true },
-			want: want{0, "arm", nil, nil, map[string]string{"arm": "false"}}},
+			want: want{0, "arm", nil, nil, map[string]string{"arm": "false", "hold": "true"}}},
+		{name: "already queued and armed", mutate: func(c *workerEnvVerifyCase) { c.queued, c.autoMerge = true, true },
+			want: want{0, "arm", nil, nil, map[string]string{"arm": "false", "hold": "true"}},
+			says: "the guard would: disable auto-merge on #4321, keeping it in the merge queue"},
 		{name: "wrong author", mutate: func(c *workerEnvVerifyCase) { c.author = "mallory" },
-			want: want{1, "refuse", []string{"author"}, nil, map[string]string{"arm": "false", "comment": "true"}}},
+			want: want{1, "refuse", []string{"author"}, nil, map[string]string{"arm": "false", "hold": "false", "comment": "true"}}},
+		{name: "wrong author, queued", mutate: func(c *workerEnvVerifyCase) { c.author, c.queued = "mallory", true },
+			want: want{1, "refuse", []string{"author"}, nil, map[string]string{"arm": "false", "hold": "false"}},
+			says: "the guard would: take #4321 out of the merge queue"},
 		{name: "wrong branch", mutate: func(c *workerEnvVerifyCase) { c.headRef = "bot/worker-env-sync-2" },
 			want: want{1, "refuse", []string{"head-ref"}, nil, map[string]string{"arm": "false"}}},
 		{name: "fork", mutate: func(c *workerEnvVerifyCase) { c.headRepo = "mallory/beads" },
@@ -1387,7 +1523,8 @@ func TestWorkerEnvSyncVerify(t *testing.T) {
 		{name: "workflow commands in the PR's files and file names", mutate: func(c *workerEnvVerifyCase) {
 			c.headBuild += "# " + strings.ReplaceAll(inject, "\n", "\n# ")
 			c.headManifest += inject
-			c.files = append(c.files, [2]string{"added", "x##[add-mask]true"}, [2]string{"added", "::add-mask::true"})
+			c.files = append(c.files, [2]string{"added", "x##[add-mask]true"}, [2]string{"added", "::add-mask::true"},
+				[2]string{"added", "%0A%3A%3Aadd-mask%3A%3Atrue"})
 		}, want: want{1, "refuse", []string{"files", "build-file", "pin", "gascity"}, nil, map[string]string{"arm": "false", "comment": "true"}}},
 		{name: "refusal already commented on this head", mutate: func(c *workerEnvVerifyCase) {
 			c.author = "mallory"
@@ -1401,13 +1538,24 @@ func TestWorkerEnvSyncVerify(t *testing.T) {
 			c.author = "mallory"
 			c.comments = [][2]string{{"mallory", marker(workerEnvTestHead)}}
 		}, want: want{1, "refuse", []string{"author"}, nil, map[string]string{"comment": "true"}}},
+		// Who pushed the head is undecided, but no outage: no hold, so a
+		// queue entry comes out.
 		{name: "activity not yet showing the head's push", mutate: func(c *workerEnvVerifyCase) {
 			c.activity[0][1] = "2222222222222222222222222222222222222222"
-		}, want: want{2, "unknown", nil, []string{"pusher"}, map[string]string{"arm": "false", "comment": "false"}}},
+		}, want: want{2, "unknown", nil, []string{"pusher"}, map[string]string{"arm": "false", "hold": "false", "comment": "false"}}},
+		{name: "activity not yet showing the head's push, queued and armed", mutate: func(c *workerEnvVerifyCase) {
+			c.activity[0][1] = "2222222222222222222222222222222222222222"
+			c.queued, c.autoMerge = true, true
+		}, want: want{2, "unknown", nil, []string{"pusher"}, map[string]string{"arm": "false", "hold": "false"}},
+			says: "the guard would: take #4321 out of the merge queue"},
 		{name: "gascity unreachable", env: []string{"WORKER_ENV_SYNC_GIT_URL=file:///nonexistent-gascity"},
-			want: want{2, "unknown", nil, []string{"gascity"}, map[string]string{"arm": "false"}}},
+			want: want{2, "unknown", nil, []string{"gascity"}, map[string]string{"arm": "false", "hold": "true"}}},
+		{name: "gascity unreachable, queued", env: []string{"WORKER_ENV_SYNC_GIT_URL=file:///nonexistent-gascity"},
+			mutate: func(c *workerEnvVerifyCase) { c.queued = true },
+			want:   want{2, "unknown", nil, []string{"gascity"}, map[string]string{"arm": "false", "hold": "true"}},
+			says:   "the guard would: hold #4321 in the merge queue (unknown is transient; a refusal or a new head takes it out)"},
 		{name: "PR unreadable", mutate: func(c *workerEnvVerifyCase) { c.hidePR = true },
-			want: want{2, "unknown", nil, []string{"pr"}, map[string]string{"arm": "false"}}},
+			want: want{2, "unknown", nil, []string{"pr"}, map[string]string{"arm": "false", "hold": "false"}}},
 		{name: "fallback: already in the review pipeline", mutate: func(c *workerEnvVerifyCase) { c.labels = append(c.labels, "status/reviewing") },
 			want: want{0, "arm", nil, nil, map[string]string{"arm": "true", "fallback-label": "false"}}},
 		{name: "fallback: labeled for review once before", mutate: func(c *workerEnvVerifyCase) { c.labeled = append(c.labeled, workerEnvSyncReviewLabel) },
@@ -1481,6 +1629,9 @@ func TestWorkerEnvSyncVerify(t *testing.T) {
 				}
 				return n
 			}
+			if c.says != "" && !strings.Contains(r.out, c.says+"\n") {
+				t.Errorf("the report lacks %q\n%s", c.says, r.out)
+			}
 			if got := names(`(?m)^FAIL ([a-z-]+):`); !slices.Equal(got, c.want.fails) {
 				t.Errorf("failed checks %v, want %v\n%s", got, c.want.fails, r.out)
 			}
@@ -1505,6 +1656,8 @@ func TestWorkerEnvSyncVerify(t *testing.T) {
 			cmds := workerEnvCommandLines(r.out)
 			if annotation == "" && len(cmds) != 0 || annotation != "" && (len(cmds) != 1 || !strings.HasPrefix(cmds[0], annotation) || strings.Count(cmds[0], "::") != 2) {
 				t.Errorf("workflow commands in the output %q, want only %q once\n%s", cmds, annotation, r.out)
+			} else if msg := workerEnvRunnerMessage(strings.TrimPrefix(strings.Join(cmds, ""), annotation)); strings.ContainsAny(msg, "\r\n") {
+				t.Errorf("annotation message %q, as the runner decodes it, breaks across lines", msg)
 			}
 			if strings.Contains(out["reason"], "::") || strings.Contains(out["reason"], "##[") {
 				t.Errorf("reason output holds a workflow command opener: %q", out["reason"])

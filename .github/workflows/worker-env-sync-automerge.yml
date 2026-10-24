@@ -42,12 +42,17 @@
 # verification of the sync PR, even one that failed or whose outputs were
 # lost, looks the open sync PR up itself and reads its head, queue and
 # auto-merge state with the job's read-only token. Only verify's verdict
-# "arm" for exactly the head it reads arms anything or keeps anything
-# armed; otherwise it disables any auto-merge and takes the PR out of the
-# merge queue. The one exception is an explicit "unknown" (most likely
-# GitHub or gascity briefly unreachable) for that same head: a queue entry
-# is held for the next check, though a pending auto-merge is still
-# disabled. Writes use the gascity-autofix App's merge token (contents,
+# "arm" for exactly the head it reads arms the PR or keeps it queued; an
+# explicit "unknown" for that same head also holds a queue entry for the
+# next check, but only when GitHub or gascity did not answer a read
+# (verify's hold), never when the activity API does not show who pushed the
+# head. Nothing keeps an auto-merge, whatever the verdict: act disables a
+# pending one (armed, not queued), and a later run on a green head arms
+# afresh; on a PR it may keep queued it disables the auto-merge and keeps
+# the queue entry, since one left on could queue the PR again after a push
+# or an ejection. Otherwise act disables any auto-merge and takes the PR
+# out of the merge queue, and fails if the PR is still armed or queued
+# after that. Writes use the gascity-autofix App's merge token (contents,
 # pull-requests and merge-queues write: GitHub's enablePullRequestAutoMerge
 # wants contents and pull-requests write on one token, and the merge queue
 # its own permission); it cannot be the GITHUB_TOKEN, whose queued PR would
@@ -150,6 +155,7 @@ jobs:
       head-sha: ${{ steps.verify.outputs.head-sha }}
       verdict: ${{ steps.verify.outputs.verdict }}
       arm: ${{ steps.verify.outputs.arm }}
+      hold: ${{ steps.verify.outputs.hold }}
       comment: ${{ steps.verify.outputs.comment }}
       fallback-label: ${{ steps.verify.outputs.fallback-label }}
       rerun: ${{ steps.verify.outputs.rerun }}
@@ -210,9 +216,15 @@ jobs:
     steps:
       # The open sync PR, looked up here rather than taken from verify's
       # outputs, and what to do with it: arm only on verify's verdict
-      # "arm" for exactly the head read here; hold a queue entry on an
-      # explicit "unknown" for that head (disabling a pending auto-merge);
-      # otherwise take everything out.
+      # "arm" for exactly the head read here; hold a queue entry on that
+      # verdict, or an explicit "unknown", for that head when verify says
+      # hold (it does on "arm", and on an "unknown" only when GitHub or
+      # gascity did not answer a read); take an auto-merge out whatever the
+      # verdict: a pending one (armed, not queued) since GitHub keeps it
+      # across a later push (a later run arms afresh), and one on a PR held
+      # in the queue (take-out "auto-merge": the entry stays) since it
+      # could queue the PR again after a push or an ejection; otherwise
+      # take everything out.
       - name: Read the sync PR and decide
         id: state
         env:
@@ -221,6 +233,7 @@ jobs:
           VERDICT: ${{ needs.verify.outputs.verdict }}
           VERIFIED_HEAD: ${{ needs.verify.outputs.head-sha }}
           ARM: ${{ needs.verify.outputs.arm }}
+          HOLD: ${{ needs.verify.outputs.hold }}
         run: |
           case "$VERDICT" in
           arm | refuse | unknown | none) ;;
@@ -228,6 +241,9 @@ jobs:
           esac
           if ! [[ $VERIFIED_HEAD =~ ^[0-9a-f]{40}$ ]]; then
             VERIFIED_HEAD=none
+          fi
+          if [ "$HOLD" != true ]; then
+            HOLD=false
           fi
           number="$(gh api "repos/$REPO/pulls?state=open&base=main&head=${REPO%%/*}:bot/worker-env-sync&per_page=100" \
             --jq 'map(select(.head.repo.full_name == .base.repo.full_name and .head.ref == "bot/worker-env-sync")) | .[0].number // empty')"
@@ -243,18 +259,18 @@ jobs:
             exit 1
           fi
           arm=false takeout=""
-          if [ "$VERDICT" = arm ] && [ "$VERIFIED_HEAD" = "$head" ]; then
-            if [ "$ARM" = true ] && [ "$queued" = false ] && [ "$armed" = false ]; then
-              arm=true
-            fi
-          elif [ "$VERDICT" = unknown ] && [ "$VERIFIED_HEAD" = "$head" ]; then
-            if [ "$armed" = true ] && [ "$queued" = false ]; then
+          if { [ "$VERDICT" = arm ] || [ "$VERDICT" = unknown ]; } && [ "$HOLD" = true ] && [ "$VERIFIED_HEAD" = "$head" ]; then
+            if [ "$armed" = true ] && [ "$queued" = true ]; then
+              takeout=auto-merge
+            elif [ "$armed" = true ]; then
               takeout=pending
+            elif [ "$VERDICT" = arm ] && [ "$ARM" = true ] && [ "$queued" = false ]; then
+              arm=true
             fi
           elif [ "$armed" = true ] || [ "$queued" = true ]; then
             takeout=all
           fi
-          echo "Sync PR #$number at $head (verify: $VERDICT for $VERIFIED_HEAD); queued: $queued, auto-merge armed: $armed; arm: $arm, take out: ${takeout:-nothing}."
+          echo "Sync PR #$number at $head (verify: $VERDICT for $VERIFIED_HEAD, hold: $HOLD); queued: $queued, auto-merge armed: $armed; arm: $arm, take out: ${takeout:-nothing}."
           {
             echo "pr=$number"
             echo "head=$head"
@@ -280,11 +296,20 @@ jobs:
           permission-pull-requests: write
           permission-merge-queues: write
 
-      # TAKEOUT all: dequeue and disable auto-merge. TAKEOUT pending: only
-      # disable a pending auto-merge (the queue entry is held). Through the
-      # GraphQL mutations, since gh pr merge --disable-auto leaves a queued
-      # PR as it is; and a pending auto-merge can queue the PR between the
-      # read and the disable, so the state is read again after it.
+      # Takes out what the state step decided. Under "all" and "pending" (a
+      # pending auto-merge, no queue entry) that is everything it finds:
+      # under "pending" an entry can only be one that auto-merge made since,
+      # so it comes out with it, and a push since the state step's read
+      # cannot leave anything in. Under "auto-merge" (a PR the state step
+      # keeps queued, still armed) it disables the auto-merge and keeps the
+      # queue entry, unless the head has moved since the state step read
+      # it. Auto-merge is disabled before the PR is dequeued, so it cannot
+      # queue the PR again; it can have queued it between a read and the
+      # disable, so the state is read again after each round, and a failed
+      # mutation only warns: that read decides. An unreadable state, or
+      # anything left after two rounds, fails the step. Through the GraphQL
+      # mutations, since gh pr merge --disable-auto leaves a queued PR as
+      # it is.
       - name: Take the sync PR out of auto-merge and the merge queue
         if: steps.state.outputs.takeout != ''
         env:
@@ -293,43 +318,67 @@ jobs:
           PR: ${{ steps.state.outputs.pr }}
           NODE_ID: ${{ steps.state.outputs.node-id }}
           TAKEOUT: ${{ steps.state.outputs.takeout }}
+          HEAD: ${{ steps.state.outputs.head }}
         run: |
           if [ -z "$GH_TOKEN" ]; then
             echo "::error::no merge token, so #$PR may still be armed or queued; take it out by hand (Remove from queue, or disable auto-merge)."
             exit 1
           fi
           read_state() {
-            gh api graphql -f owner="${REPO%%/*}" -f name="${REPO#*/}" -F number="$PR" -f query="$PR_STATE" \
-              --jq '.data.repository.pullRequest | "\(.isInMergeQueue) \(.autoMergeRequest != null)"'
+            state="$(gh api graphql -f owner="${REPO%%/*}" -f name="${REPO#*/}" -F number="$PR" -f query="$PR_STATE" \
+              --jq '.data.repository.pullRequest | "\(.headRefOid) \(.isInMergeQueue) \(.autoMergeRequest != null)"')" || state=""
+            read -r head queued armed <<<"$state"
+            if ! [[ $head =~ ^[0-9a-f]{40}$ && $queued =~ ^(true|false)$ && $armed =~ ^(true|false)$ ]]; then
+              echo "::error::could not read #$PR's queue and auto-merge state, so it may still be armed or queued; take it out by hand (Remove from queue, or disable auto-merge)."
+              exit 1
+            fi
+            dequeue=$queued
+            if [ "$TAKEOUT" = auto-merge ] && [ "$head" = "$HEAD" ]; then
+              dequeue=false
+            fi
           }
-          dequeue() {
-            gh api graphql -f query='mutation($id: ID!) { dequeuePullRequest(input: {id: $id}) { clientMutationId } }' -f id="$NODE_ID"
-            echo "Took #$PR out of the merge queue."
-          }
-          disable() {
-            gh api graphql -f query='mutation($id: ID!) { disablePullRequestAutoMerge(input: {pullRequestId: $id}) { clientMutationId } }' -f id="$NODE_ID"
-            echo "Disabled auto-merge on #$PR."
-          }
-          state="$(read_state)"
-          read -r queued armed <<<"$state"
-          if [ "$TAKEOUT" = all ] && [ "$queued" = true ]; then
-            dequeue
+          read_state
+          for _ in 1 2; do
+            if [ "$armed" = false ] && [ "$dequeue" = false ]; then
+              break
+            fi
+            if [ "$armed" = true ]; then
+              if gh api graphql -f query='mutation($id: ID!) { disablePullRequestAutoMerge(input: {pullRequestId: $id}) { clientMutationId } }' -f id="$NODE_ID"; then
+                echo "Disabled auto-merge on #$PR."
+              else
+                echo "::warning::disabling auto-merge on #$PR failed; reading its state again."
+              fi
+            fi
+            if [ "$dequeue" = true ]; then
+              if gh api graphql -f query='mutation($id: ID!) { dequeuePullRequest(input: {id: $id}) { clientMutationId } }' -f id="$NODE_ID"; then
+                echo "Took #$PR out of the merge queue."
+              else
+                echo "::warning::taking #$PR out of the merge queue failed; reading its state again."
+              fi
+            fi
+            read_state
+          done
+          if [ "$armed" = true ] || [ "$dequeue" = true ]; then
+            echo "::error::after two take-outs #$PR is still queued: $queued, auto-merge armed: $armed; take it out by hand (Remove from queue, or disable auto-merge)."
+            exit 1
           fi
-          if [ "$armed" = true ] && { [ "$TAKEOUT" = all ] || [ "$queued" = false ]; }; then
-            disable
-          fi
-          state="$(read_state)"
-          read -r queued armed <<<"$state"
           if [ "$queued" = true ]; then
-            dequeue
+            echo "#$PR stays in the merge queue at $head, with auto-merge disabled."
+          else
+            echo "#$PR is neither armed nor queued."
           fi
 
       # Armed only on a green head (verify's arm), GitHub queues the PR at
-      # once, from that head. If it does not (a check moved, a conflict),
-      # the pending auto-merge would outlive a later push: disable it, and
-      # a later run arms again. A refusal for lack of permission is the
-      # fallback's signal (denied=1), not a failure; any other failure
-      # fails the job and labels nothing.
+      # once, from that head, and nothing may stay armed after that. If
+      # GitHub does not queue it at once (a check moved, a conflict), the
+      # pending auto-merge would outlive a later push, and one left on the
+      # queued PR could queue it again after a push or an ejection: either
+      # way the step disables it, keeping a queue entry (a later run arms a
+      # PR left unqueued again), and reads the state again after each
+      # disable, a failed one only warning. A state it cannot read, or an
+      # auto-merge still armed after two disables, fails the step. A
+      # refusal for lack of permission is the fallback's signal (denied=1),
+      # not a failure; any other failure fails the job and labels nothing.
       - name: Arm auto-merge
         id: arm
         if: steps.state.outputs.arm == 'true' && steps.merge-token.outcome == 'success'
@@ -351,21 +400,46 @@ jobs:
             esac
             exit 1
           fi
-          for attempt in 1 2 3; do
+          read_state() {
             state="$(gh api graphql -f owner="${REPO%%/*}" -f name="${REPO#*/}" -F number="$PR" -f query="$PR_STATE" \
-              --jq '.data.repository.pullRequest | "\(.isInMergeQueue) \(.autoMergeRequest != null)"')"
+              --jq '.data.repository.pullRequest | "\(.isInMergeQueue) \(.autoMergeRequest != null)"')" || state=""
             read -r queued armed <<<"$state"
+            if ! [[ $queued =~ ^(true|false)$ && $armed =~ ^(true|false)$ ]]; then
+              echo "::error::could not read #$PR's queue and auto-merge state after arming it, so it may still be armed; disable its auto-merge by hand."
+              exit 1
+            fi
+          }
+          for attempt in 1 2 3; do
+            read_state
             if [ "$queued" = true ]; then
-              echo "#$PR is in the merge queue at $HEAD."
-              exit 0
+              break
             fi
             if [ "$attempt" -lt 3 ]; then
               sleep "${QUEUE_WAIT:-5}"
             fi
           done
-          echo "::warning::GitHub did not queue #$PR at once; disabling its pending auto-merge (a later run arms it again)."
+          if [ "$queued" = false ]; then
+            echo "::warning::GitHub did not queue #$PR at once; disabling its pending auto-merge (a later run arms it again)."
+          fi
+          for _ in 1 2; do
+            if [ "$armed" = false ]; then
+              break
+            fi
+            if gh api graphql -f query='mutation($id: ID!) { disablePullRequestAutoMerge(input: {pullRequestId: $id}) { clientMutationId } }' -f id="$NODE_ID"; then
+              echo "Disabled auto-merge on #$PR."
+            else
+              echo "::warning::disabling auto-merge on #$PR failed; reading its state again."
+            fi
+            read_state
+          done
           if [ "$armed" = true ]; then
-            gh api graphql -f query='mutation($id: ID!) { disablePullRequestAutoMerge(input: {pullRequestId: $id}) { clientMutationId } }' -f id="$NODE_ID"
+            echo "::error::after two disables #$PR's auto-merge is still armed; disable it by hand."
+            exit 1
+          fi
+          if [ "$queued" = true ]; then
+            echo "#$PR is in the merge queue at $HEAD, with no auto-merge armed."
+          else
+            echo "#$PR is neither queued nor armed."
           fi
 
       - name: Mint PR token (gascity-autofix)

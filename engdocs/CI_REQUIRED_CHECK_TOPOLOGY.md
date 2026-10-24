@@ -700,12 +700,18 @@ The sync, end to end:
    queues it the moment the second gate passes.
 4. The guard's act job fails closed. After every verification (one that
    failed, or whose outputs were lost, included) it looks the open sync PR
-   up itself and keeps or queues anything only on the verdict "arm" for
-   exactly the head it reads. Otherwise it disables any auto-merge and
-   takes the PR out of the merge queue. The exception is an explicit
-   "unknown" (GitHub or gascity briefly unreachable) for that same head:
-   a queue entry is held for the next check, and a pending auto-merge is
-   still disabled. A refused PR gets one comment per head commit with the
+   up itself. It queues the PR, or keeps it queued, only on the verdict
+   "arm" for exactly the head it reads; an explicit "unknown" for that
+   same head also holds a queue entry for the next check, but only when
+   GitHub or gascity did not answer a read (briefly unreachable), never
+   when the activity API does not show who pushed the head. It never keeps
+   an auto-merge, whatever the verdict: it disables a pending one (armed,
+   not queued), and a later run on a green head arms afresh; on a PR it
+   keeps queued it disables the auto-merge and keeps the queue entry, since
+   an auto-merge left on could queue the PR again after a push or an
+   ejection. Otherwise it disables any auto-merge and takes the PR out of
+   the merge queue, and the job fails if the PR is still armed or queued
+   after that. A refused PR gets one comment per head commit with the
    reasons. Without the variable, the PR is labeled
    `status/needs-review-auto` and lands through the automated review, as
    before.
@@ -721,7 +727,8 @@ The sync, end to end:
 The verifier reads the PR's files and file names, and prints them (a diff,
 a refusal), but nothing it prints reaches the runner as a workflow command:
 its stdout and stderr are defanged (`::` and the legacy `##[` broken up)
-before they leave it. Unfiltered, a sync branch carrying a line
+before they leave it, and its own annotations escape `%`, which the runner
+decodes in a command's message. Unfiltered, a sync branch carrying a line
 `##[add-mask]true` would have the runner mask `true`, and the runner then
 drops every job output that holds a masked value. The act job's
 fail-closed reading is the second line of defense.

@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -438,8 +441,9 @@ func TestRBEWorkerEnvSync(t *testing.T) {
 // printed with no lookup; a branch is resolved with git ls-remote, by its
 // exact name: the fixture's decoy/refs/heads/main also matches ls-remote's
 // pattern, and is listed first. A branch gascity does not have, or a
-// gascity it cannot reach, fails with nothing on stdout, so a caller never
-// reads a partial answer as a commit.
+// gascity it cannot reach, or one that does not answer within the lookup's
+// bound, fails with nothing on stdout, so a caller never reads a partial
+// answer as a commit.
 func TestRBEWorkerEnvSyncRef(t *testing.T) {
 	f := newRBEWorkerEnvFixture(t)
 	dir := f.beads(t, f.manifest, f.pin)
@@ -471,6 +475,24 @@ func TestRBEWorkerEnvSyncRef(t *testing.T) {
 			}
 		})
 	}
+
+	// A gascity that takes the connection and never answers, as a stalled
+	// github.com would, holds the lookup only until its bound: timeout's
+	// exit 124, long before git's own 20-second low-speed limit, with
+	// nothing on stdout.
+	t.Run("hung", func(t *testing.T) {
+		requireHostTool(t, "timeout")
+		hung := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
+		t.Cleanup(hung.Close)
+		cmd := exec.Command("bash", rbeWorkerEnvSyncRef, "main")
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), append(f.env(), "WORKER_ENV_SYNC_GIT_URL="+hung.URL+"/gastownhall/gascity", "WORKER_ENV_SYNC_GIT_TIMEOUT=2")...)
+		start := time.Now()
+		out, err := cmd.Output()
+		if took := time.Since(start); exitCode(err) != 124 || len(out) != 0 || took > 15*time.Second {
+			t.Errorf("worker-env-sync-ref against a hung gascity: err %v after %s, stdout %q; want timeout's exit 124 within the bound and nothing on stdout", err, took.Round(time.Millisecond), out)
+		}
+	})
 }
 
 // TestBazelRBEWorkerEnvPreflight: when gascity re-pins and beads' copy falls
