@@ -671,11 +671,13 @@ func TestBazelWorkflowPermissionsReadOnly(t *testing.T) {
 	}
 }
 
-// Nothing restored from the runner cache is executed unverified: the Bazel
-// binary is downloaded fresh into a Bazelisk home outside the cache and
-// checked against a sha256 pinned for .bazelversion, the repo contents cache
-// (unverified extracted repos) is off, and restored Go modules are checked
-// against go.sum before use.
+// Nothing restored from the runner cache is executed unverified: Bazelisk
+// and the Bazel binary are checked against a sha256 pinned for each (Bazel's
+// per .bazelversion) before anything runs them, the Bazel binary runs from a
+// fresh Bazelisk home outside the runner Bazel cache (its own entry is
+// pinned by TestSetupBazelBinariesComeFromAVerifiedCacheEntry), the repo
+// contents cache (unverified extracted repos) is off, and restored Go
+// modules are checked against go.sum before use.
 func TestBazelRestoredCachesAreVerified(t *testing.T) {
 	version := strings.TrimSpace(readPolicyFile(t, sourceRepoRoot(t), ".bazelversion"))
 	var install, wrapper ciWorkflowStep
@@ -733,5 +735,94 @@ func TestBazelRestoredCachesAreVerified(t *testing.T) {
 				t.Errorf("%s job %s restores the Go module cache without verifying it next", bazelWorkflowName, name)
 			}
 		}
+	}
+}
+
+// Bazelisk and the Bazel release come from their own runner-cache entry
+// when it holds them, so a lane normally downloads neither (on 2026-10-19,
+// 21:50-23:30Z, a GitHub release download that crawled at ~30 KB/s held
+// every gascity lane 8 minutes, then failed it). The entry can never change
+// what runs: each file is checked against its pin before it is installed,
+// and a file with other content is removed and downloaded. Bazelisk runs
+// the checked binary from a home seeded in its own layout, and must not
+// download (its download URL cannot resolve there). Downloads give up on a
+// slow transfer and fall back to Bazel's GitHub release; only bazel-test's
+// push-to-main step writes the entry.
+func TestSetupBazelBinariesComeFromAVerifiedCacheEntry(t *testing.T) {
+	steps := readSetupBazelAction(t).Runs.Steps
+	index := map[string]int{}
+	for i, step := range steps {
+		index[step.Name] = i
+	}
+	restoreAt, ok := index["Restore Bazelisk and Bazel"]
+	if !ok {
+		t.Fatal("setup-bazel has no Restore Bazelisk and Bazel step")
+	}
+	if index["Install Bazelisk"] != restoreAt+1 {
+		t.Errorf("Restore Bazelisk and Bazel must come right before Install Bazelisk")
+	}
+	restore := steps[restoreAt]
+	const binPath = "${{ runner.temp }}/bazel-bin"
+	wantKey := "bazel-bin-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.bazelversion', '.github/actions/setup-bazel/action.yml') }}"
+	if restore.ID != "bin-restore" || !strings.HasPrefix(restore.Uses, "actions/cache/restore@") ||
+		restore.With["path"] != binPath || restore.With["key"] != wantKey {
+		t.Errorf("Restore Bazelisk and Bazel: id %q uses %q with %v; want id bin-restore, actions/cache/restore of %s keyed %s",
+			restore.ID, restore.Uses, restore.With, binPath, wantKey)
+	}
+	if _, ok := restore.With["restore-keys"]; ok {
+		t.Errorf("Restore Bazelisk and Bazel has restore-keys; another key's binaries are other pins' and of no use")
+	}
+
+	install := steps[index["Install Bazelisk"]].Run
+	// Each restored file is checked before it is used, and a fetched one
+	// before it replaces anything.
+	for _, order := range [][2]string{
+		{`have "$bazelisk" "$sha"`, `sudo install -m 755 "$bazelisk" /usr/local/bin/bazelisk`},
+		{`have "$bin/$bazel_file" "$bazel_sha"`, `install -m 755 "$bin/$bazel_file" "$home/downloads/sha256/$bazel_sha/bin/bazel"`},
+		{`echo "$want  $file.part" | sha256sum -c --status -; then`, `mv -f "$file.part" "$file"`},
+	} {
+		first, second := strings.Index(install, order[0]), strings.Index(install, order[1])
+		if first < 0 || second < 0 || first > second {
+			t.Errorf("setup-bazel Install Bazelisk must run %q before %q", order[0], order[1])
+		}
+	}
+	for _, want := range []string{
+		`if echo "$2  $1" | sha256sum -c --status -; then`,
+		`rm -f "$1"`,
+		// A slow or stalled transfer gives up and retries, then the next source.
+		"--speed-limit 262144 --speed-time 15",
+		"--max-time 120",
+		`"https://github.com/bazelbuild/bazelisk/releases/download/${version}/bazelisk-linux-${arch}"`,
+		`"https://releases.bazel.build/${bazel_version}/release/${bazel_file}"`,
+		`"https://github.com/bazelbuild/bazel/releases/download/${bazel_version}/${bazel_file}"`,
+		// Bazelisk's own layout: the mapping names the sha256 the binary sits under.
+		`printf '%s' "$bazel_sha" > "$home/downloads/metadata/bazelbuild/$bazel_file"`,
+		`rm -rf "$home"`,
+	} {
+		if !strings.Contains(install, want) {
+			t.Errorf("setup-bazel Install Bazelisk lacks %q", want)
+		}
+	}
+
+	wrapper := steps[index["Install bazel wrapper"]].Run
+	if want := "BAZELISK_FORMAT_URL='https://setup-bazel-seeded.invalid/%v/%o/%m' /usr/local/bin/bazelisk --version"; !strings.Contains(wrapper, want) {
+		t.Errorf("setup-bazel Install bazel wrapper must run the seeded Bazel with downloads pointed at an address that cannot resolve: lacks %q", want)
+	}
+
+	for _, step := range steps {
+		if actionFamily(step.Uses) == cacheSaveActionFamily {
+			t.Errorf("setup-bazel step %q saves a cache; only %s's push-to-main steps may", step.Name, bazelJobName)
+		}
+	}
+	// The one writer: bazel-test's push-to-main step, under the key the
+	// restore computed (TestBazelWorkflowCacheTopology pins the runner
+	// cache's beside it).
+	save := readCIWorkflow(t, bazelWorkflowName).job(t, bazelJobName).step(t, "Save Bazelisk and Bazel")
+	if !strings.HasPrefix(save.Uses, "actions/cache/save@") || save.With["path"] != binPath ||
+		save.With["key"] != "${{ steps.bazel.outputs.bin-cache-key }}" {
+		t.Errorf("%s Save Bazelisk and Bazel uses %q with %v; want actions/cache/save of %s under setup-bazel's bin-cache-key", bazelJobName, save.Uses, save.With, binPath)
+	}
+	if want := "${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.bazel.outcome == 'success' && steps.bazel.outputs.bin-cache-hit != 'true' }}"; save.If != want {
+		t.Errorf("Save Bazelisk and Bazel if %q, want %q (only a push to main that missed writes the entry)", save.If, want)
 	}
 }

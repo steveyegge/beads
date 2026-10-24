@@ -3662,20 +3662,31 @@ func TestBazelWorkflowActionsArePinned(t *testing.T) {
 	}
 }
 
-// The runner cache holds only content fixed by .bazelversion and
-// MODULE.bazel.lock (repository cache, Bazelisk), so it is keyed on exactly
-// that and written only by a push to main that missed the key; it never holds
-// the generated rc or credentials.
+// The runner cache holds only content fixed by .bazelversion,
+// MODULE.bazel and MODULE.bazel.lock (the repository cache), so it is keyed
+// on exactly that and written only by a push to main that missed the key; it
+// never holds the generated rc or credentials. Beside it, bazel-test saves
+// setup-bazel's checked Bazelisk and Bazel binaries
+// (TestSetupBazelBinariesComeFromAVerifiedCacheEntry); nothing else saves.
 func TestBazelWorkflowCacheTopology(t *testing.T) {
 	job := readCIWorkflow(t, bazelWorkflowName).job(t, bazelJobName)
 	var saves []ciWorkflowStep
 	for _, step := range job.Steps {
-		if actionFamily(step.Uses) == cacheSaveActionFamily {
+		if actionFamily(step.Uses) == cacheSaveActionFamily && step.With["path"] == bazelCachePath {
 			saves = append(saves, step)
 		}
 	}
 	if len(saves) != 1 {
-		t.Fatalf("%s has %d cache save steps, want 1", bazelWorkflowName, len(saves))
+		t.Fatalf("%s has %d runner cache save steps, want 1", bazelWorkflowName, len(saves))
+	}
+	var others []string
+	for _, step := range job.Steps {
+		if actionFamily(step.Uses) == cacheSaveActionFamily && step.With["path"] != bazelCachePath && step.Name != "Save Bazelisk and Bazel" {
+			others = append(others, step.Name)
+		}
+	}
+	if len(others) > 0 {
+		t.Errorf("%s saves caches %v beside the runner cache and setup-bazel's binaries", bazelWorkflowName, others)
 	}
 	save := saves[0]
 	if save.If != bazelCacheSaveIf {
@@ -3688,7 +3699,7 @@ func TestBazelWorkflowCacheTopology(t *testing.T) {
 	var restore, writer ciWorkflowStep
 	for _, step := range readSetupBazelAction(t).Runs.Steps {
 		switch {
-		case actionFamily(step.Uses) == cacheRestoreActionFamily:
+		case actionFamily(step.Uses) == cacheRestoreActionFamily && step.ID == "restore":
 			restore = step
 		case step.Env["BAZEL_CI_SECRET_DIR"] != "":
 			writer = step

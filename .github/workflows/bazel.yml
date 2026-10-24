@@ -1022,6 +1022,16 @@ jobs:
         with:
           path: ${{ runner.temp }}/bazel-ci-cache
           key: bazel-repo-v4-${{ runner.os }}-${{ hashFiles('.bazelversion', 'MODULE.bazel', 'MODULE.bazel.lock') }}
+      # Bazelisk and the Bazel binary, which setup-bazel checked against their
+      # pins before running them, under the key it restored (its "Restore
+      # Bazelisk and Bazel"): written only here, by a push to main that
+      # missed it, so the other lanes download neither.
+      - name: Save Bazelisk and Bazel
+        if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.bazel.outcome == 'success' && steps.bazel.outputs.bin-cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/bazel-bin
+          key: ${{ steps.bazel.outputs.bin-cache-key }}
 
       # A redacted, schema'd summary of this invocation's BEP, exec log and
       # profile: timing, per-mnemonic cache classes, cold actions, test
