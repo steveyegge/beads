@@ -221,6 +221,13 @@ type VersionChange struct {
 // versionChanges contains agent-actionable changes for recent versions
 var versionChanges = []VersionChange{
 	{
+		Version: "1.3.2",
+		Date:    "2026-10-23",
+		Changes: []string{
+			"STABLE: first stable 1.3.2 release. Same code as 1.3.2-rc.3; only the version stamp changed. No schema migration, so upgrading from 1.3.1 or any 1.3.2 RC is a binary swap. The 1.3.2-rc.3, rc.2 and rc.1 entries below all apply; after upgrading from bd <=1.3.0, run 'bd recompute-blocked' once per workspace (#7037).",
+		},
+	},
+	{
 		Version: "1.3.2-rc.3",
 		Date:    "2026-10-23",
 		Changes: []string{
