@@ -20,7 +20,8 @@ on:
   # The post-merge complement: the Windows and macOS jobs a merge group
   # skipped run on the commit that lands (main fast-forwards to the tested
   # merge-group commit, the same tree); bazel.yml's own push run is every
-  # Bazel lane, so this run calls none.
+  # Bazel lane, so this run calls none. A red push run opens the
+  # ci/main-red issue (main-ci-alert.yml).
   push:
     branches: [ main ]
 

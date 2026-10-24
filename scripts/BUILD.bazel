@@ -57,6 +57,7 @@ go_test(
         "ci_workflow_test.go",
         "embedded_shard_count_test.go",
         "host_tools_test.go",
+        "main_ci_alert_test.go",
         "makefile_bazel_primary_test.go",
         "migration_corpus_bazel_test.go",
         "nogo_integration_step_script_test.go",

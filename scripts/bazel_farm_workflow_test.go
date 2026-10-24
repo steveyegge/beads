@@ -407,12 +407,20 @@ func TestBazelFarmArtifactsHaveNoPrivilegedConsumer(t *testing.T) {
 		if err := yaml.Unmarshal([]byte(raw), &doc); err != nil {
 			t.Fatal(err)
 		}
-		if !reflect.DeepEqual(doc.On.WorkflowRun.Workflows, []string{"PR"}) {
-			t.Errorf("%s workflow_run workflows = %v, want exactly [PR]", entry.Name(), doc.On.WorkflowRun.Workflows)
+		// main-ci-alert.yml watches main's push runs (a farm run is
+		// pull_request_target, never push) and downloads no artifact
+		// (TestMainCIAlertWorkflow); every other consumer watches "PR" and
+		// acts only on pull_request runs.
+		watched, event := []string{"PR"}, "pull_request"
+		if entry.Name() == mainCIAlertWorkflowName {
+			watched, event = mainCIAlertTracked, "push"
+		}
+		if !reflect.DeepEqual(doc.On.WorkflowRun.Workflows, watched) {
+			t.Errorf("%s workflow_run workflows = %v, want exactly %v", entry.Name(), doc.On.WorkflowRun.Workflows, watched)
 		}
 		for jobName, job := range readCIWorkflow(t, entry.Name()).Jobs {
-			if !strings.Contains(job.If, "github.event.workflow_run.event == 'pull_request'") {
-				t.Errorf("%s job %s if = %q; want it limited to pull_request runs (a farm run is pull_request_target)", entry.Name(), jobName, job.If)
+			if !strings.Contains(job.If, "github.event.workflow_run.event == '"+event+"'") {
+				t.Errorf("%s job %s if = %q; want it limited to %s runs (a farm run is pull_request_target)", entry.Name(), jobName, job.If, event)
 			}
 		}
 	}

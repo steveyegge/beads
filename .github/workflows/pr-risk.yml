@@ -15,7 +15,8 @@ on:
   merge_group:
     types: [ checks_requested ]
   # The post-merge complement: the Nix job a merge group skipped runs on
-  # the commit that lands (the tested merge-group tree).
+  # the commit that lands (the tested merge-group tree). A red run opens
+  # the ci/main-red issue (main-ci-alert.yml).
   push:
     branches: [ main ]
 

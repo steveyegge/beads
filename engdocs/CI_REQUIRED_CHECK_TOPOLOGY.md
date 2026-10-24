@@ -887,6 +887,7 @@ Do not require these existing check names directly:
 
 - `Scope` (`pr.yml`'s and `pr-risk.yml`'s scope job; the gates require
   its result)
+- `Report main's push CI` (`main-ci-alert.yml`, push runs on `main` only)
 - `Detect CI tier`
 - `Fast checks (frozen migrations, .beads diff)` (the base-diff checks; the
   tree checks it used to run are Bazel tests, see
@@ -1759,6 +1760,28 @@ what reaches `main` is a regression that came from combining the PR with
 what landed after that run, or a flake; it surfaces on the push run,
 attributed to the PR that landed it.
 
+### How a red main surfaces
+
+`.github/workflows/main-ci-alert.yml` runs on `workflow_run` (completed)
+of `PR`, `PR Risk`, `Bazel` and `Main` on `main`, and acts only on this
+repository's push runs (`.github/scripts/main-ci-alert.sh`):
+
+- A red push run (`failure`, `timed_out`, `startup_failure`) opens the one
+  `ci/main-red` issue with the workflow, the run, the head SHA, the commit
+  subject, the PR its squash subject names (`(#N)`) and the failed jobs;
+  while that issue is open, later reds comment on it instead. It also
+  comments on the PR.
+- A later green push run of the same workflow comments that it is green
+  again, and the issue closes once no tracked workflow's latest decided
+  push run on `main` is red. Cancelled runs (`main.yml` cancels older
+  runs) say nothing either way.
+- It holds `issues: write`, `pull-requests: write` and `actions: read`,
+  checks out only its script from the default branch, reads no artifact
+  and runs nothing from the run it reports on. Runs are serialized
+  (`queue: max`), so two reds finishing together open one issue.
+
+Fix forward or revert the PR the issue names.
+
 ### Rolling back the fast set
 
 Make the merge group's scope full again: give `merge_group` the
@@ -1841,10 +1864,11 @@ that were invalidated (an entry ahead was ejected) keep running to
 completion and use farm capacity; plan the build limit with that in mind.
 The 60-minute check timeout ejects an entry whose gates never report;
 both gates normally finish in about 4 minutes (p50; 8-9 at p90) on the
-fast set. A flake
-in a job the merge group skips (a Windows installer download, a
-Dolt-tier lane) no longer ejects anything: it reds a push run on `main`
-instead; re-run that push run's failed jobs.
+fast set. A flake in a job the merge group skips (a Windows installer
+download, a Dolt-tier lane) no longer ejects anything: it reds a push run
+on `main` instead, which opens or comments on the `ci/main-red` issue
+([How a red main surfaces](#how-a-red-main-surfaces)); re-run that push
+run's failed jobs.
 
 Rollback of the queue: delete the `merge_queue` rule from the ruleset.
 Queued PRs fall back to the normal merge button; the `merge_group`
