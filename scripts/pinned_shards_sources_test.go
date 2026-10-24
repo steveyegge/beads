@@ -35,31 +35,38 @@ func packageTopLevelTests(t *testing.T, root, pkg string) map[string]bool {
 	return tests
 }
 
-// Every name a pinned-shard manifest pins or lists rr is a top-level test of
-// the target's package: a stale pinned name runs nowhere, a renamed test
-// silently falls back to the round-robin shards, and a stale rr name hides
-// that its successor was never measured (regenerate with
-// tools/bazel/pin_shards.py).
+// Every name a pinned-shard manifest pins is a top-level test of the
+// target's package: a stale pinned name runs nowhere, and a renamed test
+// silently falls back to the round-robin shards (regenerate with
+// tools/bazel/pin_shards.py). A stale rr name is only logged: rr lines change
+// no sharding, and a test renamed or added since the manifest was measured is
+// unmeasured whatever the rr lines say (TestPinnedShardManifestsAreMeasured
+// counts the package's tests, not the manifest's names), so renaming or
+// removing an unpinned test needs no regeneration.
 func TestPinnedShardManifestNamesAreTests(t *testing.T) {
 	root := sourceRepoRoot(t)
 	for _, tgt := range pinnedShardTargets {
 		t.Run(tgt.rule, func(t *testing.T) {
 			tests := packageTopLevelTests(t, root, tgt.pkg)
 			m := readPinnedShardManifest(t, root, tgt.manifest)
-			var stale []string
+			var stale, staleRR []string
 			for name := range m.pinned {
 				if !tests[name] {
-					stale = append(stale, "pins "+name)
+					stale = append(stale, name)
 				}
 			}
 			for name := range m.rr {
 				if !tests[name] {
-					stale = append(stale, "lists rr "+name)
+					staleRR = append(staleRR, name)
 				}
 			}
 			sort.Strings(stale)
-			for _, s := range stale {
-				t.Errorf("%s %s, which is not a top-level test in %s/*_test.go; regenerate it (tools/bazel/pin_shards.py)", tgt.manifest, s, tgt.pkg)
+			sort.Strings(staleRR)
+			for _, name := range stale {
+				t.Errorf("%s pins %s, which is not a top-level test in %s/*_test.go; regenerate it (tools/bazel/pin_shards.py)", tgt.manifest, name, tgt.pkg)
+			}
+			if len(staleRR) > 0 {
+				t.Logf("%s lists rr %s, no longer tests in %s/*_test.go; harmless (rr lines change no sharding), dropped when it is next regenerated", tgt.manifest, strings.Join(staleRR, ", "), tgt.pkg)
 			}
 		})
 	}
@@ -83,15 +90,17 @@ var pinThresholdRe = regexp.MustCompile(`(?m)^# Every top-level test measured at
 
 // pinShardsRecipe is the one command that regenerates a measured manifest:
 // pin_shards.py with the pinned shard count and threshold the manifest was
-// generated with, over testlogs. It returns "" when the manifest's header
-// does not state its threshold.
-func pinShardsRecipe(manifest, text string, m pinnedShardManifest, testlogs string) string {
+// generated with, over testlogs, keeping only the tests pkg defines (the
+// runs measured other trees: older commits, other branches). It returns ""
+// when the manifest's header does not state its threshold.
+func pinShardsRecipe(manifest, pkg, text string, m pinnedShardManifest, testlogs string) string {
 	th := pinThresholdRe.FindStringSubmatch(text)
 	if th == nil {
 		return ""
 	}
-	return fmt.Sprintf("python3 tools/bazel/pin_shards.py --shards %d --min-seconds %s --record-measured \\\n"+
-		"    --write %s \\\n    %s", m.shards, th[1], manifest, testlogs)
+	return fmt.Sprintf("python3 tools/bazel/pin_shards.py --shards %d --min-seconds %s \\\n"+
+		"    --record-measured --tests-in %s \\\n"+
+		"    --write %s \\\n    %s", m.shards, th[1], pkg, manifest, testlogs)
 }
 
 // unmeasuredTests returns the tests, sorted, that a manifest neither pins
@@ -143,12 +152,13 @@ func TestStaleMeasuredManifestCheck(t *testing.T) {
 	}
 
 	const header = "# Every top-level test measured at >= 3s, bin-packed\n"
-	want := "python3 tools/bazel/pin_shards.py --shards 1 --min-seconds 3 --record-measured \\\n" +
+	want := "python3 tools/bazel/pin_shards.py --shards 1 --min-seconds 3 \\\n" +
+		"    --record-measured --tests-in pkg \\\n" +
 		"    --write m.txt \\\n    LOGS"
-	if got := pinShardsRecipe("m.txt", header, m, "LOGS"); got != want {
+	if got := pinShardsRecipe("m.txt", "pkg", header, m, "LOGS"); got != want {
 		t.Errorf("pinShardsRecipe = %q, want %q", got, want)
 	}
-	if got := pinShardsRecipe("m.txt", "# no threshold\n", m, "LOGS"); got != "" {
+	if got := pinShardsRecipe("m.txt", "pkg", "# no threshold\n", m, "LOGS"); got != "" {
 		t.Errorf("pinShardsRecipe without a threshold = %q, want \"\"", got)
 	}
 }
@@ -171,7 +181,7 @@ func TestPinnedShardManifestsAreMeasured(t *testing.T) {
 			case !measured:
 				t.Fatalf("%s lists rr tests, but measuredManifestTestlogs has no entry for %s to regenerate it from", tgt.manifest, tgt.rule)
 			}
-			recipe := pinShardsRecipe(tgt.manifest, text, m, testlogs)
+			recipe := pinShardsRecipe(tgt.manifest, tgt.pkg, text, m, testlogs)
 			if recipe == "" {
 				t.Fatalf("%s's header does not state its threshold (%s); regenerate it with tools/bazel/pin_shards.py", tgt.manifest, pinThresholdRe)
 			}

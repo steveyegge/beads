@@ -1673,8 +1673,10 @@ sh_test(
 # test in bd_test, not the TestManagedLocalProxied* ones, so most of its
 # shards would run none. Unsharded, the 21 tests took 140-250s in CI, the
 # dolt-race lane's last action; 3 shards of ~63s measured each leave
-# uow_dolt_test's slowest shard (~130-160s) the lane's tail. 4 would put
-# --config=dolt-race at 65 test actions, past its --jobs=64
+# uow_dolt_test's slowest shard (~130-160s) the lane's tail. They put
+# --config=dolt-race at 64 test actions, exactly its --jobs=64, so the union
+# has no headroom: a 4th shard, or any new dolt-server or dolt-server-proxied
+# test action, needs a --jobs or shard-count change first
 # (scripts/bazel_dolt_race_test.go). scripts/managed_local_lane_test.go fails
 # unless the manifest lists exactly the TestManagedLocalProxied* tests a
 # linux cgo build of bd_test compiles, on shard_count shards.

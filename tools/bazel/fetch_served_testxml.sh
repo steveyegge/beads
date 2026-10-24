@@ -9,9 +9,14 @@
 # prints each run's http_served_test directory: pin_shards.py's TESTLOGS. So
 # one command regenerates the manifest:
 #
-#   python3 tools/bazel/pin_shards.py --shards 10 --min-seconds 3 --record-measured \
+#   python3 tools/bazel/pin_shards.py --shards 10 --min-seconds 3 \
+#       --record-measured --tests-in backend/http \
 #       --write backend/http/served_pinned_shards.txt \
 #       $(tools/bazel/fetch_served_testxml.sh 30 "$(mktemp -d)")
+#
+# The runs measured other trees than the checkout (older commits, other
+# pull requests' branches), so --tests-in keeps only the tests
+# backend/http/*_test.go defines.
 #
 # It prints nothing unless every download succeeded, so a failure leaves
 # pin_shards.py without TESTLOGS rather than with some. Needs gh,

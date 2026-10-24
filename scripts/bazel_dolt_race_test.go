@@ -505,8 +505,10 @@ func TestBazelDoltRaceArmsExactlyOnePerMode(t *testing.T) {
 
 // bazelDoltRaceTestActions: the union's test actions, 27 dolt-server + 37
 // proxied-server, each a target's shard (62 when item 5 A1b aquery-verified
-// them; bd_managed_local_test has run as 3 shards, not 1, since: 4 would
-// leave no room under --jobs=64).
+// them; 64 since bd_managed_local_test runs as 3 shards). That is exactly
+// --jobs=64, so the union has no headroom: a 4th managed-local shard, or any
+// new test action in either tier, would make 65 and needs a --jobs or
+// shard-count change first.
 const bazelDoltRaceTestActions = 64
 
 // TestBazelDoltRaceFitsTheJobsBudget pins the one-wave rule (closed PR

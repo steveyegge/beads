@@ -253,7 +253,48 @@ func TestPinShardsGenerator(t *testing.T) {
 		t.Errorf("parsePinnedShardManifest(--record-measured output) = %+v, problems %q", m, problems)
 	}
 
+	// --tests-in keeps only the tests a package directory defines, as
+	// goTopLevelTestRe reads them: TestSkipped (its func is no longer a
+	// test) and run c's TestGone (slow enough to pin; on no branch here)
+	// stay out, named on stderr.
+	write("c", "shard_1_of_1", `<testcase name="TestGone" time="40"/>`)
+	pkg := t.TempDir()
+	src := "package x\n\nimport \"testing\"\n\n" +
+		"func TestA(t *testing.T) {}\n\nfunc TestB(t *testing.T) {\n}\n\nfunc TestC(t *testing.T) {\n}\n\n" +
+		"func TestD(t *testing.T) {\n}\n\nfunc TestFast(t *testing.T) {\n}\n\nfunc TestSkipped(n int) {\n}\n"
+	if err := os.WriteFile(filepath.Join(pkg, "x_test.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	filtered := filepath.Join(t.TempDir(), "pinned.txt")
 	cmd := exec.Command(python, filepath.Join(root, "tools", "bazel", "pin_shards.py"),
+		"--shards", "2", "--min-seconds", "5", "--record-measured", "--tests-in", pkg, "--write", filtered,
+		filepath.Join(logs, "a"), filepath.Join(logs, "b"), filepath.Join(logs, "c"))
+	stderr, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("pin_shards.py --tests-in: %v\n%s", err, stderr)
+	}
+	if !strings.Contains(string(stderr), "dropping 2 measured tests "+pkg+"/*_test.go does not define: TestGone, TestSkipped") {
+		t.Errorf("pin_shards.py --tests-in does not name the dropped tests on stderr:\n%s", stderr)
+	}
+	b, err := os.ReadFile(filtered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = nil
+	for _, line := range strings.Split(string(b), "\n") {
+		if line != "" && !strings.HasPrefix(line, "#") {
+			got = append(got, line)
+		}
+	}
+	if want := []string{"1 TestA", "1 TestC", "2 TestB", "2 TestD", "rr TestFast"}; strings.Join(got, ";") != strings.Join(want, ";") {
+		t.Errorf("--tests-in manifest = %q, want %q", got, want)
+	}
+	if b, err := exec.Command(python, filepath.Join(root, "tools", "bazel", "pin_shards.py"),
+		"--shards", "2", "--min-seconds", "5", "--tests-in", t.TempDir(), filepath.Join(logs, "a")).CombinedOutput(); err == nil {
+		t.Errorf("pin_shards.py accepted a --tests-in directory with no *_test.go:\n%s", b)
+	}
+
+	cmd = exec.Command(python, filepath.Join(root, "tools", "bazel", "pin_shards.py"),
 		"--shards", "5", "--min-seconds", "5", filepath.Join(logs, "a"))
 	if b, err := cmd.CombinedOutput(); err == nil {
 		t.Errorf("pin_shards.py accepted 5 shards for 4 slow tests:\n%s", b)

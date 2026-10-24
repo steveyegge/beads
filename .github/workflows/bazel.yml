@@ -2077,10 +2077,11 @@ jobs:
   # --config=doltserver-proxied's lines, one tag filter for both), mode
   # remote only, in place of bazel-doltserver and bazel-proxied, which run
   # in every other mode. One client waits on rbe-west for both tiers'
-  # shards at once (27 + 35 test actions, under the remote-exec config's 64
-  # jobs), so the job ends with the slower tier and saves the other's
-  # runner. Each member target's test action key is unchanged (aquery-
-  # verified), so cached results carry over both ways, and a revert of the
+  # shards at once (27 + 37 = 64 test actions, exactly the remote-exec
+  # config's 64 jobs: no headroom, TestBazelDoltRaceFitsTheJobsBudget), so
+  # the job ends with the slower tier and saves the other's runner. Each
+  # member target's test action key is unchanged (aquery-verified), so
+  # cached results carry over both ways, and a revert of the
   # cutover re-executes nothing. Gated: its job.status is both the
   # bazel-doltserver and the bazel-proxied workflow_call output (a failure
   # in either tier fails both ids, which are both required). Every step has
@@ -2149,8 +2150,8 @@ jobs:
             exit 1
           fi
 
-      # Both tiers' shards at once: 27 dolt-server + 35 proxied test actions,
-      # under the remote-exec config's 64 jobs. No --config=sole-run: its one
+      # Both tiers' shards at once: 27 dolt-server + 37 proxied test actions,
+      # exactly the remote-exec config's 64 jobs. No --config=sole-run: its one
       # line (no retry on a remote cache eviction) is already in the union.
       # Shards are expected around 55-95s on rbe-west (see bazel-proxied's
       # test step), the proxied tier's 1200s cap included. The step timeout is

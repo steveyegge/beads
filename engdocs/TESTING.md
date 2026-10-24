@@ -355,7 +355,9 @@ measured, as `rr <TestName>`, so `//scripts:go_test_sources_test` can tell
 the tests added since: they all land in the round-robin shards, and once
 there are more than 2 per round-robin shard the test fails and prints the
 regeneration command (for `http_served_test`, one `pin_shards.py` run over
-the CI test.xml `tools/bazel/fetch_served_testxml.sh` downloads). Every
+the CI test.xml `tools/bazel/fetch_served_testxml.sh` downloads, with
+`--tests-in` keeping only the tests the checkout defines). An rr name that is
+no longer a test is only logged. Every
 pinned-shard target but `corpus_served_test` keeps at least 3 round-robin
 shards.
 

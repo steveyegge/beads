@@ -82,9 +82,10 @@ go_test(
 # Shard count: the package's tests are serial. The 32 TestE2E_* cases
 # measured at >= 3s are pinned (tools/bazel/go_test_pinned_shard.sh,
 # served_pinned_shards.txt from tools/bazel/pin_shards.py --shards 10
-# --min-seconds 3 --record-measured) onto 10 shards, and the binary's
-# round-robin deals every other test over the last 4: the 30 the manifest
-# lists rr (about a second together) and any test added since. The
+# --min-seconds 3 --record-measured --tests-in backend/http) onto 10 shards,
+# and the binary's round-robin deals every other test over the last 4: the
+# 30 the manifest lists rr (about a second together) and any test added
+# since. The
 # durations are each test's maximum over 35 PR runs of the lane on
 # 2026-10-23..24 (bazel.yml's bazel-embedded-served-testxml artifact, 29
 # distinct executions of each shard): 18-174s a test. The slowest,
@@ -98,8 +99,10 @@ go_test(
 # last action. scripts/pinned_shards_sources_test.go fails once more than 2
 # tests per round-robin shard are listed neither pinned nor rr (added since
 # the measurement), and prints the command that regenerates the manifest
-# (needs gh and the network):
-#   python3 tools/bazel/pin_shards.py --shards 10 --min-seconds 3 --record-measured \
+# (needs gh and the network; --tests-in drops what the runs measured that
+# this checkout does not define, renamed or other branches' tests):
+#   python3 tools/bazel/pin_shards.py --shards 10 --min-seconds 3 \
+#       --record-measured --tests-in backend/http \
 #       --write backend/http/served_pinned_shards.txt \
 #       $(tools/bazel/fetch_served_testxml.sh 30 "$(mktemp -d)")
 #
