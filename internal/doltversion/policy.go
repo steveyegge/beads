@@ -20,7 +20,7 @@ import (
 // fk_comp_snap_issue, and other writes and information_schema queries fail
 // with "table has unknown fields". Every database bd creates in embedded mode
 // holds one, and so does any database whose schema a dolt sql-server 2.3.3 or
-// newer created. The embedded engine bd links and the CI pin are both 2.5.1
+// newer created. The embedded engine bd links and the CI pin are both 2.6.0
 // (scripts/ci/install-dolt.sh), which TestPinnedDoltCLIAtLeastRecommendedMin
 // keeps at or above this value; docs/architecture/dolt.md ("Which Dolt version
 // to install") records the dated measurements.

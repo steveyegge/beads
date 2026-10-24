@@ -408,7 +408,7 @@ clone-local sidecar setting will slot between the two when the sidecar
 reader lands in contract part 2). On
 startup it probes that binary with `dolt version` and recommends
 **dolt >= 2.5.0** (the embedded engine `bd` links, and the release CI pins, is
-2.5.1). Older releases have known problems:
+2.6.0). Older releases have known problems:
 
 - Dolt 2.4.0 through 2.4.2 return no row for an ungrouped `MAX` or `MIN` over
   an unmatched primary-key prefix (dolthub/dolt#12093).
