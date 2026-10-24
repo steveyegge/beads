@@ -63,14 +63,16 @@ runs:
 
     # Bazelisk and the Bazel release .bazelversion names come from their own
     # runner-cache entry when it holds them, else are downloaded. Both are
-    # pinned by sha256 and checked before anything runs them, so a file the
-    # entry holds with any other content (a corrupt or poisoned entry) is
-    # replaced by a download and never executed. The entry is keyed on this
-    # action and .bazelversion, which hold the pins, takes no fallback key
-    # (other pins' files are no use), and only the caller's push-to-main
-    # save writes it (bin-cache-key). A download gives up on a stalled or
-    # slow transfer and retries, then tries the next source: on 2026-10-19
-    # (about 21:50-23:30Z) GitHub release downloads crawled at ~30 KB/s, and
+    # pinned by sha256 and checked before anything runs them: a file the
+    # entry holds with other content (a corrupt entry) is replaced by a
+    # download, never run. What keeps the entry trustworthy beyond those two
+    # files is who writes it, as for the runner cache above (actions/cache
+    # extracts an archive wherever its paths point): only the caller's
+    # push-to-main save (bin-cache-key), under an exact key on this action
+    # and .bazelversion, which hold the pins, with no fallback key (other
+    # pins' files are no use). A download gives up on a stalled or slow
+    # transfer and retries, then tries the next source: on 2026-10-19 (about
+    # 21:50-23:30Z) GitHub release downloads crawled at ~30 KB/s, and
     # `curl --retry 3 --max-time 120` held every lane 8 minutes, then failed
     # it.
     - name: Restore Bazelisk and Bazel
@@ -111,18 +113,20 @@ runs:
             echo "setup-bazel: $(basename "$1") from the runner cache, sha256 checked"
             return 0
           fi
-          echo "::warning title=setup-bazel::$(basename "$1") in the runner cache does not match its pinned sha256; downloading it"
+          echo "::warning title=setup-bazel::$(basename "$1") in the runner cache does not match its pinned sha256; downloading it. A cache entry is never overwritten: bump bazel-bin-v1 in setup-bazel's key, or delete the entry"
           rm -f "$1"
           return 1
         }
-        # fetch FILE SHA URL...: FILE from the first URL that delivers its
-        # pinned content. Each attempt gives up on a transfer slower than
-        # 256 KiB/s for 15 s (or 120 s in all), with two retries per URL.
+        # fetch FILE SHA FLOOR URL...: FILE from the first URL that delivers
+        # its pinned content. Each attempt gives up after 120 s, or after 15 s
+        # below FLOOR bytes a second, with two retries per URL. FLOOR is about
+        # the file's size over 100 s, so a transfer fast enough to keep going
+        # also finishes inside the 120 s.
         fetch() {
-          local file=$1 want=$2 url
-          shift 2
+          local file=$1 want=$2 floor=$3 url
+          shift 3
           for url in "$@"; do
-            if curl -fsSL --connect-timeout 10 --max-time 120 --speed-limit 262144 --speed-time 15 \
+            if curl -fsSL --connect-timeout 10 --max-time 120 --speed-limit "$floor" --speed-time 15 \
               --retry 2 --retry-delay 2 --retry-all-errors -o "$file.part" "$url" &&
               echo "$want  $file.part" | sha256sum -c --status -; then
               mv -f "$file.part" "$file"
@@ -135,12 +139,14 @@ runs:
           return 1
         }
         bazelisk="$bin/bazelisk-${version}-linux-${arch}"
+        # Bazelisk is about 7 MB: 64 KiB/s.
         have "$bazelisk" "$sha" ||
-          fetch "$bazelisk" "$sha" "https://github.com/bazelbuild/bazelisk/releases/download/${version}/bazelisk-linux-${arch}"
+          fetch "$bazelisk" "$sha" 65536 "https://github.com/bazelbuild/bazelisk/releases/download/${version}/bazelisk-linux-${arch}"
         sudo install -m 755 "$bazelisk" /usr/local/bin/bazelisk
+        # Bazel is about 77 MB: 768 KiB/s.
         bazel_file="bazel-${bazel_version}-linux-${bazel_arch}"
         have "$bin/$bazel_file" "$bazel_sha" ||
-          fetch "$bin/$bazel_file" "$bazel_sha" \
+          fetch "$bin/$bazel_file" "$bazel_sha" 786432 \
             "https://releases.bazel.build/${bazel_version}/release/${bazel_file}" \
             "https://github.com/bazelbuild/bazel/releases/download/${bazel_version}/${bazel_file}"
         # Bazelisk's home is a fresh directory seeded with that checked
@@ -152,10 +158,14 @@ runs:
         mkdir -p "$home/downloads/metadata/bazelbuild" "$home/downloads/sha256/$bazel_sha/bin"
         install -m 755 "$bin/$bazel_file" "$home/downloads/sha256/$bazel_sha/bin/bazel"
         printf '%s' "$bazel_sha" > "$home/downloads/metadata/bazelbuild/$bazel_file"
+        # BAZELISK_SKIP_WRAPPER: Bazelisk runs that binary, never a
+        # tools/bazel wrapper a workspace file could supply (tools/bazel is a
+        # directory here).
         {
           echo "BAZELISK_HOME=$RUNNER_TEMP/bazelisk-home"
           echo "BAZELISK_VERIFY_SHA256=$bazel_sha"
           echo "BAZEL_CI_BAZEL_SHA256=$bazel_sha"
+          echo "BAZELISK_SKIP_WRAPPER=true"
         } >> "$GITHUB_ENV"
 
     # Fork and Dependabot runs (no secrets, no OIDC): a key and a CSR, the CSR

@@ -334,14 +334,20 @@ PR. It runs in the default branch's cache scope, which `push` runs on
   settles it. Record the answer here.
 - What a writable cache would reach, and what now stops it. The `bazel.yml`
   lanes on `main` and on same-repo PRs, which fall back to `main`'s scope,
-  restore two caches:
-  - The Bazel runner cache (`bazel-repo-v3-*`, restore-keys prefix). It now
+  restore three caches:
+  - The Bazel runner cache (`bazel-repo-v4-*`, restore-keys prefix). It
     holds only the content-addressable `--repository_cache`, whose hits
-    Bazel re-hashes. The Bazel binary is not cached: `setup-bazel`
-    downloads it into a fresh Bazelisk home with `BAZELISK_VERIFY_SHA256`
-    and checks it against a sha256 pinned for `.bazelversion`. The repo
-    contents cache (extracted repos, never re-verified) is off
-    (`--repo_contents_cache=`).
+    Bazel re-hashes. The repo contents cache (extracted repos, never
+    re-verified) is off (`--repo_contents_cache=`).
+  - Bazelisk and the Bazel binary (`bazel-bin-v1-*`, exact key on
+    `setup-bazel`'s action and `.bazelversion`, written only by
+    `bazel-test` on a push to `main`). `setup-bazel` checks both files
+    against their sha256 pins before installing them, replaces a file with
+    other content by a download, and runs Bazel from a fresh Bazelisk home
+    with `BAZELISK_SKIP_WRAPPER`. Like every `actions/cache` entry, the
+    archive is extracted wherever its paths point, so the pin check covers
+    the two binaries; the writer is what keeps the rest of the entry
+    trustworthy.
   - The Go module cache (`beads-go-mod-v2-*`). `bazel-test` runs
     `go mod verify` right after restoring it.
 

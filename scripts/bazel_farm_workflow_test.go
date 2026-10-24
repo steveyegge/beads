@@ -741,13 +741,15 @@ func TestBazelRestoredCachesAreVerified(t *testing.T) {
 // Bazelisk and the Bazel release come from their own runner-cache entry
 // when it holds them, so a lane normally downloads neither (on 2026-10-19,
 // 21:50-23:30Z, a GitHub release download that crawled at ~30 KB/s held
-// every gascity lane 8 minutes, then failed it). The entry can never change
-// what runs: each file is checked against its pin before it is installed,
-// and a file with other content is removed and downloaded. Bazelisk runs
-// the checked binary from a home seeded in its own layout, and must not
-// download (its download URL cannot resolve there). Downloads give up on a
-// slow transfer and fall back to Bazel's GitHub release; only bazel-test's
-// push-to-main step writes the entry.
+// every gascity lane 8 minutes, then failed it). Each file is checked
+// against its pin before it is installed, and a file with other content is
+// removed and downloaded; like every actions/cache entry, the rest of the
+// archive is trusted for who writes it, which is only bazel-test's
+// push-to-main step. Bazelisk runs the checked binary from a home seeded in
+// its own layout, never a tools/bazel wrapper, and must not download (its
+// download URL cannot resolve there). Downloads give up on a transfer too
+// slow to finish in time for its file and fall back to Bazel's GitHub
+// release.
 func TestSetupBazelBinariesComeFromAVerifiedCacheEntry(t *testing.T) {
 	steps := readSetupBazelAction(t).Runs.Steps
 	index := map[string]int{}
@@ -789,9 +791,12 @@ func TestSetupBazelBinariesComeFromAVerifiedCacheEntry(t *testing.T) {
 	for _, want := range []string{
 		`if echo "$2  $1" | sha256sum -c --status -; then`,
 		`rm -f "$1"`,
-		// A slow or stalled transfer gives up and retries, then the next source.
-		"--speed-limit 262144 --speed-time 15",
-		"--max-time 120",
+		// A slow or stalled transfer gives up and retries, then the next
+		// source; each file's floor finishes it inside --max-time.
+		`--max-time 120 --speed-limit "$floor" --speed-time 15`,
+		`fetch "$bazelisk" "$sha" 65536 `,
+		`fetch "$bin/$bazel_file" "$bazel_sha" 786432 `,
+		`echo "BAZELISK_SKIP_WRAPPER=true"`,
 		`"https://github.com/bazelbuild/bazelisk/releases/download/${version}/bazelisk-linux-${arch}"`,
 		`"https://releases.bazel.build/${bazel_version}/release/${bazel_file}"`,
 		`"https://github.com/bazelbuild/bazel/releases/download/${bazel_version}/${bazel_file}"`,
@@ -812,6 +817,25 @@ func TestSetupBazelBinariesComeFromAVerifiedCacheEntry(t *testing.T) {
 	for _, step := range steps {
 		if actionFamily(step.Uses) == cacheSaveActionFamily {
 			t.Errorf("setup-bazel step %q saves a cache; only %s's push-to-main steps may", step.Name, bazelJobName)
+		}
+	}
+	// The outputs the save reads: the restore's primary key (set before the
+	// lookup, so also on a miss; cache-matched-key would be empty there and
+	// the save would never fill the entry) and its exact-hit flag.
+	var action struct {
+		Outputs map[string]struct {
+			Value string `yaml:"value"`
+		} `yaml:"outputs"`
+	}
+	if err := yaml.Unmarshal([]byte(readPolicyFile(t, sourceRepoRoot(t), setupBazelActionDir+"/action.yml")), &action); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{
+		"bin-cache-key": "${{ steps.bin-restore.outputs.cache-primary-key }}",
+		"bin-cache-hit": "${{ steps.bin-restore.outputs.cache-hit }}",
+	} {
+		if got := action.Outputs[name].Value; got != want {
+			t.Errorf("setup-bazel output %s = %q, want %q", name, got, want)
 		}
 	}
 	// The one writer: bazel-test's push-to-main step, under the key the
